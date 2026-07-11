@@ -1,3 +1,10 @@
-from tools.filesystem import search_code
+from pprint import pprint
 
-print(search_code("workspace/repos/my_demo", "py"))
+from tools.filesystem import summarize_repository
+
+
+result = summarize_repository(
+    repo_path="workspace/repos/my_demo",
+)
+
+pprint(result)

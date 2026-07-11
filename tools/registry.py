@@ -1,6 +1,6 @@
 from .base import Tool
 from .github import clone_repository
-from .filesystem import (list_files, read_file, search_code)
+from .filesystem import (list_files, read_file, search_code, summarize_repository)
 
 TOOLS = [
   Tool(
@@ -20,6 +20,38 @@ TOOLS = [
         "url"
       ]
     }
+  ),
+  Tool(
+    name="summarize_repository",
+    description="""
+Collect a structured overview of a local repository.
+
+Use this after cloning a repository to quickly understand its
+top-level structure, file types, languages, important files,
+and README introduction.
+""",
+    function=summarize_repository,
+    parameters={
+        "type": "object",
+        "properties": {
+            "repo_path": {
+                "type": "string",
+                "description": "Local repository path",
+            },
+            "readme_max_chars": {
+                "type": "integer",
+                "description": (
+                    "Maximum number of README characters to return"
+                ),
+                "default": 2000,
+                "minimum": 100,
+                "maximum": 10000,
+            },
+        },
+        "required": [
+            "repo_path",
+        ],
+    },
   ),
   Tool(
     name="list_files",
@@ -119,6 +151,13 @@ where a feature is implemented.
 
                 "description":
                 "Keyword to search"
+            },
+            "max_results": {
+              "type": "integer",
+              "description": "Maximum number of matching lines to return",
+              "default": 20,
+              "minimum": 1,
+              "maximum": 100,
             }
         },
 
