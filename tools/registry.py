@@ -1,0 +1,136 @@
+from .base import Tool
+from .github import clone_repository
+from .filesystem import (list_files, read_file, search_code)
+
+TOOLS = [
+  Tool(
+    name = "clone_repository",
+    description = "Clone a Github repository to local workspace.",
+    function = clone_repository,
+
+    parameters = {
+      "type": "object",
+      "properties": {
+        "url": {
+          "type": "string",
+          "description": "Github repository URL"
+        }
+      },
+      "required": [
+        "url"
+      ]
+    }
+  ),
+  Tool(
+    name="list_files",
+    description=
+    """
+List all files in a GitHub repository.
+Use this to understand repository structure.
+""",
+    function=list_files,
+    parameters=
+    {
+        "type":"object",
+        "properties":
+        {
+            "repo_path":
+            {
+                "type":"string",
+                "description":
+                "Local repository path"
+            }
+        },
+        "required":
+        [
+            "repo_path"
+        ]
+    }
+  ),
+  Tool(
+
+    name="read_file",
+
+    description=
+    """
+Read the content of a file.
+
+Use this after list_files
+to inspect important files.
+""",
+
+    function=read_file,
+
+
+    parameters=
+    {
+        "type":"object",
+
+        "properties":
+        {
+            "file_path":
+            {
+                "type":"string",
+
+                "description":
+                "Path of file to read"
+            }
+        },
+
+
+        "required":
+        [
+            "file_path"
+        ]
+    }
+  ),
+  Tool(
+
+    name="search_code",
+
+    description=
+    """
+Search for a keyword in repository files.
+
+Use this when you need to find
+where a feature is implemented.
+""",
+
+    function=search_code,
+
+
+    parameters=
+    {
+        "type":"object",
+
+        "properties":
+        {
+            "repo_path":
+            {
+                "type":"string",
+
+                "description":
+                "Repository path"
+            },
+
+            "keyword":
+            {
+                "type":"string",
+
+                "description":
+                "Keyword to search"
+            }
+        },
+
+        "required":
+        [
+            "repo_path",
+            "keyword"
+        ]
+    }
+  )
+]
+
+TOOL_MAP = {
+  tool.name: tool for tool in TOOLS
+}
