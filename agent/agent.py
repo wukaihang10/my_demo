@@ -3,6 +3,7 @@ from tools.registry import (TOOLS, TOOL_MAP)
 import json
 import time
 from agent.trace import (AgentTrace, StepTrace, ToolTrace)
+from agent.observation import process_observation
 
 TOOL_SCHEMAS = [
   tool.schema() for tool in TOOLS
@@ -31,6 +32,7 @@ Rules:
 class Agent:
   def __init__(self):
     self.tools = TOOL_MAP
+    self.trace = AgentTrace()
   
   def _preview(self, value, max_chars: int = 500) -> str:
     try:
@@ -43,8 +45,12 @@ class Agent:
     
     return text[:max_chars] + "...[truncated]"
 
-  def run(self, user_input, max_steps = 10) -> str:
+  def run(self, user_input: str, max_steps: int = 10) -> str:
     self.trace = AgentTrace()
+
+    if max_steps <= 0:
+      self.trace.finish("invalid_max_steps")
+      return "max_steps must be greater than zero."
 
     messages = [
       {
@@ -73,6 +79,7 @@ class Agent:
 
         return final_response
 
+      # 下面是工具调用循环
       messages.append(response.model_dump(exclude_none=True))
 
       for tool_call in response.tool_calls:
@@ -88,11 +95,7 @@ class Agent:
           f"{tool_trace.duration_ms:.2f} ms"
         )
 
-        content = json.dumps(
-          result,
-          ensure_ascii=False,
-          default=str,
-        ) #原先的str(result)得到的字符串里的引号(python格式)是单引号，而json是双引号；某些复杂对象无法表达。
+        content = process_observation(result)
 
         messages.append({
           "role": "tool",
@@ -109,6 +112,48 @@ class Agent:
   def execute_tool(self, tool_call)-> tuple[dict, ToolTrace]:
     name = tool_call.function.name
     started_at = time.perf_counter()
+
+    try:
+      arguments = json.loads(tool_call.function.arguments)
+
+    except (json.JSONDecodeError, TypeError) as error:
+      result = {
+        "success": False,
+        "error": f"Invalid JSON arguments: {error}"
+      }
+
+      duration_ms = (time.perf_counter() - started_at) * 1000
+
+      trace = ToolTrace(
+        tool_call_id = tool_call.id,
+        tool_name = name,
+        arguments = {},
+        success = False,
+        duration_ms = duration_ms,
+        result_preview = self._preview(result),
+        error = result["error"]
+      )
+
+      return result, trace
+
+    if not isinstance(arguments, dict):
+      result = {
+        "success": False,
+        "error": "Tool arguments must be a JSON object",
+      }
+
+      duration_ms = (time.perf_counter() - started_at) * 1000
+      trace = ToolTrace(
+        tool_call_id=tool_call.id,
+        tool_name=name,
+        arguments={},
+        success=False,
+        duration_ms=duration_ms,
+        result_preview=self._preview(result),
+        error=result["error"],
+      )
+
+      return result, trace
 
     if name not in self.tools:
       result = {
@@ -130,31 +175,8 @@ class Agent:
       )
 
       return result, trace
-    
-    try:
-      arguments = json.loads(tool_call.function.arguments)
-
-    except json.JSONDecodeError as error:
-      result = {
-        "success": False,
-        "error": f"Invalid JSON arguments: {error}"
-      }
-
-      duration_ms = (time.perf_counter() - started_at) * 1000
-
-      trace = ToolTrace(
-        tool_call_id = tool_call.id,
-        tool_name = name,
-        arguments = {},
-        success = False,
-        duration_ms = duration_ms,
-        result_preview = self._preview(result),
-        error = result["error"]
-      )
 
 
-      return result, trace
-    
     tool = self.tools[name]
 
     try:
@@ -171,19 +193,27 @@ class Agent:
         "success": False,
         "error": f"Tool execution failed: {error}",
       }
+
+    if not isinstance(result, dict):
+      result = {
+        "success": False,
+        "error": "Tool returned an invalid result: expected an object",
+      }
+    elif not isinstance(result.get("success"), bool):
+      result = {
+        "success": False,
+        "error": "Tool returned an invalid result: missing boolean success",
+      }
     
     duration_ms = (
         time.perf_counter() - started_at
     ) * 1000
 
-    success = (
-        isinstance(result, dict)
-        and result.get("success", True)
-    )
+    success = result["success"]
 
     error_message = None
 
-    if not success and isinstance(result, dict):
+    if not success:
         error_message = result.get("error")
 
     trace = ToolTrace(

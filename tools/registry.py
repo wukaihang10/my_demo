@@ -71,6 +71,13 @@ Use this to understand repository structure.
                 "type":"string",
                 "description":
                 "Local repository path"
+            },
+            "max_files": {
+                "type": "integer",
+                "description": "Maximum number of file paths to return",
+                "default": 200,
+                "minimum": 1,
+                "maximum": 2000,
             }
         },
         "required":
@@ -107,6 +114,13 @@ or summarize_repository.
                 "type": "string",
                 "description": "File path relative to the "
             "repository root",
+            },
+            "max_chars": {
+                "type": "integer",
+                "description": "Maximum number of file characters to return",
+                "default": 8000,
+                "minimum": 1,
+                "maximum": 10000,
             },
         },
         "required": [

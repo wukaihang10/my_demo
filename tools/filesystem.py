@@ -1,5 +1,12 @@
+import os
 from pathlib import Path
 from collections import Counter
+
+MAX_LIST_FILES = 2000
+MAX_READ_CHARS = 10000
+MAX_SEARCH_RESULTS = 100
+MIN_README_CHARS = 100
+MAX_README_CHARS = 10000
 
 IGNORED_DIRECTORIES = {
     ".git",
@@ -65,15 +72,43 @@ IMPORTANT_FILENAMES = {
     "manage.py",
 }
 
-def is_ignored(path:Path) -> bool:
+def is_ignored(path: Path) -> bool:
     return any(
         part in IGNORED_DIRECTORIES
         for part in path.parts
     )
 
 
-def list_files(repo_path: str):
-    root = Path(repo_path)
+def iter_repository_files(root: Path):
+    for current_dir, dirnames, filenames in os.walk(root, followlinks=False):
+        current = Path(current_dir)
+        relative_dir = current.relative_to(root)
+
+        dirnames[:] = [
+            name
+            for name in dirnames
+            if not is_ignored(relative_dir / name)
+            and not (current / name).is_symlink()
+        ]
+
+        for filename in filenames:
+            file = current / filename
+            relative_path = file.relative_to(root)
+
+            if is_ignored(relative_path):
+                continue
+
+            try:
+                file.resolve().relative_to(root)
+            except (OSError, ValueError):
+                continue
+
+            if file.is_file():
+                yield file, relative_path
+
+
+def list_files(repo_path: str, max_files: int = 200):
+    root = Path(repo_path).resolve()
     
     if not root.exists():
         return {
@@ -87,22 +122,37 @@ def list_files(repo_path: str):
             "error": f"Path is not a directory: {repo_path}",
         }
     
+    if not 1 <= max_files <= MAX_LIST_FILES:
+        return {
+            "success": False,
+            "error": f"max_files must be between 1 and {MAX_LIST_FILES}",
+        }
+
     files = []
 
-    for item in root.rglob("*"):
-        if item.is_file():
-            files.append(str(item.relative_to(root)))
+    for _, relative_path in iter_repository_files(root):
+        files.append(relative_path.as_posix())
+
+    files = sorted(files)
+    total_files = len(files)
+    truncated = False
+
+    if len(files) > max_files:
+        files = files[:max_files]
+        truncated = True
 
     return {
         "success": True,
         "repo_path": str(root),
-        "files": sorted(files),
-        "total_files": len(files)
+        "files": files,
+        "total_files": total_files,
+        "returned_files": len(files),
+        "truncated": truncated,
     }
 
 
-def read_file(repo_path: str, file_path: str):
-    root = Path(repo_path).resolve
+def read_file(repo_path: str, file_path: str, max_chars: int = 8000):
+    root = Path(repo_path).resolve()
 
     if not root.exists():
         return {
@@ -122,6 +172,12 @@ def read_file(repo_path: str, file_path: str):
             ),
         }
     
+    if not 1 <= max_chars <= MAX_READ_CHARS:
+        return {
+            "success": False,
+            "error": f"max_chars must be between 1 and {MAX_READ_CHARS}",
+        }
+
     path = (root / file_path).resolve()
     try:
         path.relative_to(root)
@@ -147,6 +203,12 @@ def read_file(repo_path: str, file_path: str):
     try:
         content = path.read_text(encoding = "utf-8")
 
+        truncated = False
+
+        if len(content) > max_chars:
+            content = content[:max_chars]
+            truncated = True
+
     except UnicodeDecodeError:
         return {
             "success": False,
@@ -170,13 +232,15 @@ def read_file(repo_path: str, file_path: str):
 
     return {
         "success": True,
-        "file_path": str(path),
+        "repo_path": str(root),
+        "file_path": path.relative_to(root).as_posix(),
         "content": content,
+        "truncated": truncated,
     }
   
 
-def search_code(repo_path: str, keyword: str, max_results: int =20):
-    root = Path(repo_path)
+def search_code(repo_path: str, keyword: str, max_results: int = 20):
+    root = Path(repo_path).resolve()
 
     if not root.exists():
         return {
@@ -196,22 +260,18 @@ def search_code(repo_path: str, keyword: str, max_results: int =20):
             "error": "Keyword cannot be empty",
         }
     
-    if max_results < 1:
+    if not 1 <= max_results <= MAX_SEARCH_RESULTS:
         return {
             "success": False,
-            "error": "max_results must be at least 1",
+            "error": (
+                f"max_results must be between 1 and {MAX_SEARCH_RESULTS}"
+            ),
         }
 
     matches = []
     normalized_keyword = keyword.lower()
 
-    for file in root.rglob("*"):
-        if not file.is_file():
-            continue
-
-        if is_ignored(file):
-            continue
-
+    for file, relative_path in iter_repository_files(root):
         try:
             content = file.read_text(encoding="utf-8")
         except (UnicodeDecodeError, PermissionError, OSError):
@@ -224,7 +284,7 @@ def search_code(repo_path: str, keyword: str, max_results: int =20):
                 continue
 
             matches.append({
-                "file": str(file),
+                "file_path": relative_path.as_posix(),
                 "line": line_number,
                 "content": line.strip(),
             })
@@ -232,6 +292,7 @@ def search_code(repo_path: str, keyword: str, max_results: int =20):
             if len(matches) >= max_results:
                 return {
                     "success": True,
+                    "repo_path": str(root),
                     "keyword": keyword,
                     "matches": matches,
                     "truncated": True,
@@ -239,6 +300,7 @@ def search_code(repo_path: str, keyword: str, max_results: int =20):
 
     return {
         "success": True,
+        "repo_path": str(root),
         "keyword": keyword,
         "matches": matches,
         "truncated": False,
@@ -246,7 +308,7 @@ def search_code(repo_path: str, keyword: str, max_results: int =20):
 
 
 def summarize_repository(repo_path: str, readme_max_chars: int = 2000):
-    root = Path(repo_path)
+    root = Path(repo_path).resolve()
 
     if not root.exists():
         return {
@@ -260,19 +322,21 @@ def summarize_repository(repo_path: str, readme_max_chars: int = 2000):
             "error": f"Path is not a directory: {repo_path}",
         }
 
+    if not MIN_README_CHARS <= readme_max_chars <= MAX_README_CHARS:
+        return {
+            "success": False,
+            "error": (
+                "readme_max_chars must be between "
+                f"{MIN_README_CHARS} and {MAX_README_CHARS}"
+            ),
+        }
+
     files = []
     language_counts = Counter()
     extension_counts = Counter()
     important_files = []
 
-    for file in root.rglob("*"):
-        if not file.is_file():
-            continue
-
-        if is_ignored(file):
-            continue
-
-        relative_path = file.relative_to(root)
+    for file, relative_path in iter_repository_files(root):
         files.append(relative_path)
 
         suffix = file.suffix.lower()
@@ -286,7 +350,7 @@ def summarize_repository(repo_path: str, readme_max_chars: int = 2000):
             language_counts[language] += 1
 
         if file.name.lower() in IMPORTANT_FILENAMES:
-            important_files.append(str(relative_path))
+            important_files.append(relative_path.as_posix())
 
     top_level_structure = sorted(
         item.name + ("/" if item.is_dir() else "")
@@ -313,12 +377,17 @@ def summarize_repository(repo_path: str, readme_max_chars: int = 2000):
 
     return {
         "success": True,
-        "repository_name": root.name,
-        "repository_path": str(root),
+        "repo_name": root.name,
+        "repo_path": str(root),
         "total_files": len(files),
         "top_level_structure": top_level_structure,
         "languages": dict(language_counts.most_common()),
         "extensions": dict(extension_counts.most_common()),
         "important_files": sorted(important_files),
+        "readme_path": (
+            readme_path.relative_to(root).as_posix()
+            if readme_path is not None
+            else None
+        ),
         "readme_preview": readme_preview,
     }
