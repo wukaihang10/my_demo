@@ -1,5 +1,9 @@
 import os
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 _client = None
 
 
@@ -10,14 +14,12 @@ def get_client():
     return _client
 
   try:
-    from dotenv import load_dotenv
     from openai import OpenAI
   except ImportError as error:
     raise RuntimeError(
       "LLM dependencies are missing; install openai and python-dotenv"
     ) from error
 
-  load_dotenv()
 
   api_key = os.getenv("DEEPSEEK_API_KEY")
   base_url = os.getenv("DEEPSEEK_BASE_URL")

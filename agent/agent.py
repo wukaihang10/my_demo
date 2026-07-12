@@ -6,6 +6,7 @@ from agent.trace import (AgentTrace, StepTrace, ToolTrace)
 from agent.observation import process_observation
 from agent.state import RepositoryState
 from agent.context import build_state_context
+from agent.history import ToolHistory
 
 TOOL_SCHEMAS = [
   tool.schema() for tool in TOOLS
@@ -36,6 +37,7 @@ class Agent:
     self.tools = TOOL_MAP
     self.trace = AgentTrace()
     self.state = RepositoryState()
+    self.tool_history = ToolHistory()
   
   def _preview(self, value, max_chars: int = 500) -> str:
     try:
@@ -105,9 +107,10 @@ class Agent:
       if keyword:
         self.state.add_search_keyword(str(keyword))
 
-  def run(self, user_input: str, max_steps: int = 10, repo_url: str | None = None) -> str:
+  def run(self, user_input: str, max_steps: int = 10, max_tool_calls = 30, repo_url: str | None = None) -> str:
     self.trace = AgentTrace()
     self.state = RepositoryState(repo_url = repo_url)
+    tool_call_count = 0
 
     if max_steps <= 0:
       self.trace.finish("invalid_max_steps")
@@ -152,6 +155,14 @@ class Agent:
 
         return final_response
 
+      #检查工具调用次数是否超了
+      tool_call_count += 1
+
+      if tool_call_count > max_tool_calls:
+        self.trace.finish("tool_budget_exceeded")
+
+        return "The agent exceeded the tool call budget."
+
       # 下面是工具调用循环
       messages.append(response.model_dump(exclude_none=True))
 
@@ -181,15 +192,6 @@ class Agent:
     self.trace.finish("max_steps_reached")
 
     return "The agent reached the maximum number of steps before producing a final answer."
-
-  def should_skip_tool(self, name: str, arguments: dict):
-    if name == "read_file":
-      file_path = arguments.get("file_path")
-
-      if file_path in self.state.read_files:
-        return True
-    
-    return False
 
   def execute_tool(self, tool_call)-> tuple[dict, ToolTrace]:
     name = tool_call.function.name
@@ -258,15 +260,15 @@ class Agent:
 
       return result, trace
 
-    if self.should_skip_tool(name, arguments):
-      result =  {
+    if self.tool_history.repeated(name, arguments):
+      result = {
         "success": False,
-        "error": f"{name} was already executed for this target."
+        "error": "Repeated tool call detected. Try another approach."
       }
 
       duration_ms = (
         time.perf_counter() - started_at) * 1000
-      
+
       trace = ToolTrace(
         tool_call_id=tool_call.id,
         tool_name=name,
@@ -278,12 +280,14 @@ class Agent:
       )
 
       return result, trace
-
-
+    
     tool = self.tools[name]
+
+    self.tool_history.add(name, arguments) #不管工具调用失败与否都记录；因为工具调用失败也能在下次llm调用错误的工具时提前发现
 
     try:
       result = tool.execute(**arguments)
+
 
     except TypeError as error:
       result = {
