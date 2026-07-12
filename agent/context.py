@@ -13,7 +13,7 @@ Repository path: {state.repo_path}
 
   if state.phase:
     sections.append(
-      f""""
+      f"""
 Current phase:
 {state.phase}
 """

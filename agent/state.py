@@ -32,7 +32,7 @@ class RepositoryState:
 
   def add_search_keyword(self, keyword: str) -> None:
     if keyword not in self.searched_keywords:
-      self.searched_keywords.appendd(keyword)
+      self.searched_keywords.append(keyword)
 
   def add_error(self, error: str) -> None:
     self.errors.append(error)

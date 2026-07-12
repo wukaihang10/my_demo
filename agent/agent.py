@@ -74,9 +74,19 @@ class Agent:
 
       self.state.important_files = list(dict.fromkeys(important_files))
 
-      repository_summary = result.get("repository_summary", {})
+      summary_fields = (
+        "repo_name",
+        "total_files",
+        "top_level_structure",
+        "languages",
+        "extensions",
+        "readme_path",
+      )
 
-      self.state.repository_summary = repository_summary
+      self.state.repository_summary = {
+        field: result.get(field)
+        for field in summary_fields
+      }
 
       self.state.phase = "reading_code"
 
@@ -85,7 +95,7 @@ class Agent:
       for file_path in files:
         self.state.add_list_file(file_path)
 
-    elif tool_name == "read_files":
+    elif tool_name == "read_file":
       file_path = result.get("file_path") or arguments.get("file_path")
       if file_path:
         self.state.add_read_file(str(file_path))
@@ -173,7 +183,7 @@ class Agent:
     return "The agent reached the maximum number of steps before producing a final answer."
 
   def should_skip_tool(self, name: str, arguments: dict):
-    if name == "read_files":
+    if name == "read_file":
       file_path = arguments.get("file_path")
 
       if file_path in self.state.read_files:
