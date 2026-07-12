@@ -1,20 +1,37 @@
-from agent.agent import Agent
+import json
 
-
-agent = Agent()
-
-result = agent.run(
-    """
-Analyze this GitHub repository:
-
-https://github.com/wukaihang10/my_demo
-
-Explain:
-1. What the project does
-2. Its architecture
-3. Its main execution flow
-4. The purpose of each important module
-"""
+from workflows.repository_analysis import (
+    analyze_repository,
 )
 
-print(result)
+
+def main():
+    repository_url = input(
+        "Enter a GitHub repository URL: "
+    ).strip()
+
+    if not repository_url:
+        print(
+            "Repository URL cannot be empty."
+        )
+        return
+
+    result = analyze_repository(
+        repository_url
+    )
+
+    print("\n===== Final Answer =====\n")
+    print(result["answer"])
+
+    print("\n===== Agent Trace =====\n")
+    print(
+        json.dumps(
+            result["trace"],
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+
+
+if __name__ == "__main__":
+    main()

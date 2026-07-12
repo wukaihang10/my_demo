@@ -83,12 +83,12 @@ Use this to understand repository structure.
 
     name="read_file",
 
-    description=
-    """
-Read the content of a file.
+    description="""
+Read a UTF-8 text file inside a local repository.
 
-Use this after list_files
-to inspect important files.
+The file_path must be relative to repo_path.
+Use paths returned by list_files, search_code,
+or summarize_repository.
 """,
 
     function=read_file,
@@ -98,22 +98,21 @@ to inspect important files.
     {
         "type":"object",
 
-        "properties":
-        {
-            "file_path":
-            {
-                "type":"string",
-
-                "description":
-                "Path of file to read"
-            }
+        "properties": {
+            "repo_path": {
+                "type": "string",
+                "description": "Local path to the repository root",
+            },
+            "file_path": {
+                "type": "string",
+                "description": "File path relative to the "
+            "repository root",
+            },
         },
-
-
-        "required":
-        [
-            "file_path"
-        ]
+        "required": [
+            "repo_path",
+            "file_path",
+        ],
     }
   ),
   Tool(

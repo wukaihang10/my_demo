@@ -1,53 +1,6 @@
 from pathlib import Path
 from collections import Counter
 
-def list_files(repo_path):
-  path = Path(repo_path)
-
-  if not path.exists():
-    return {
-      "success": False,
-      "error": f"Path does not exist: {repo_path}" 
-    }
-  
-  files = []
-
-  for item in path.rglob("*"):
-    if item.is_file():
-      # relative = item.relative_to(path)
-      files.append(str(item))
-
-  return {
-    "success": True,
-    "content": "\n".join(files)
-  }
-
-
-def read_file(file_path):
-
-  path = Path(file_path)
-
-  if not path.exists():
-    return {
-      "success": False,
-
-      "error":
-        f"File not found: {file_path}"
-    }
-  
-  try:
-    content = path.read_text(encoding = "utf-8")
-
-    return {
-      "success": True,
-      "content": content
-    }
-  except Exception as e:
-    return {
-      "success": False,
-      "error": str(e)
-    }
-  
 IGNORED_DIRECTORIES = {
     ".git",
     "node_modules",
@@ -57,70 +10,6 @@ IGNORED_DIRECTORIES = {
     "dist",
     "build",
 }
-
-def search_code(repo_path, keyword, max_results=20):
-    root = Path(repo_path)
-
-    if not root.exists():
-        return {
-            "success": False,
-            "error": f"Path not found: {repo_path}",
-        }
-
-    if not root.is_dir():
-        return {
-            "success": False,
-            "error": f"Path is not a directory: {repo_path}",
-        }
-
-    if not keyword.strip():
-        return {
-            "success": False,
-            "error": "Keyword cannot be empty",
-        }
-
-    matches = []
-    normalized_keyword = keyword.lower()
-
-    for file in root.rglob("*"):
-        if not file.is_file():
-            continue
-
-        if any(part in IGNORED_DIRECTORIES for part in file.parts):
-            continue
-
-        try:
-            content = file.read_text(encoding="utf-8")
-        except (UnicodeDecodeError, PermissionError, OSError):
-            continue
-
-        lines = content.splitlines()
-
-        for line_number, line in enumerate(lines, start=1):
-            if normalized_keyword not in line.lower():
-                continue
-
-            matches.append({
-                "file": str(file),
-                "line": line_number,
-                "content": line.strip(),
-            })
-
-            if len(matches) >= max_results:
-                return {
-                    "success": True,
-                    "keyword": keyword,
-                    "matches": matches,
-                    "truncated": True,
-                }
-
-    return {
-        "success": True,
-        "keyword": keyword,
-        "matches": matches,
-        "truncated": False,
-    }
-
 
 LANGUAGE_BY_EXTENSION = {
     ".py": "Python",
@@ -176,7 +65,187 @@ IMPORTANT_FILENAMES = {
     "manage.py",
 }
 
-def summarize_repository(repo_path, readme_max_chars=2000):
+def is_ignored(path:Path) -> bool:
+    return any(
+        part in IGNORED_DIRECTORIES
+        for part in path.parts
+    )
+
+
+def list_files(repo_path: str):
+    root = Path(repo_path)
+    
+    if not root.exists():
+        return {
+            "success": False,
+            "error": f"Path does not exist: {repo_path}" 
+        }
+
+    if not root.is_dir():
+        return {
+            "success": False,
+            "error": f"Path is not a directory: {repo_path}",
+        }
+    
+    files = []
+
+    for item in root.rglob("*"):
+        if item.is_file():
+            files.append(str(item.relative_to(root)))
+
+    return {
+        "success": True,
+        "repo_path": str(root),
+        "files": sorted(files),
+        "total_files": len(files)
+    }
+
+
+def read_file(repo_path: str, file_path: str):
+    root = Path(repo_path).resolve
+
+    if not root.exists():
+        return {
+            "success": False,
+            "error": (
+                f"Repository path not found: "
+                f"{repo_path}"
+            ),
+        }
+
+    if not root.is_dir():
+        return {
+            "success": False,
+            "error": (
+                f"Repository path is not a directory: "
+                f"{repo_path}"
+            ),
+        }
+    
+    path = (root / file_path).resolve()
+    try:
+        path.relative_to(root)
+
+    except ValueError:
+        return {
+            "success": False,
+            "error": "File path must stay inside the repository"
+        }
+    
+    if not path.exists():
+        return {
+            "success": False,
+            "error": f"File not found: {file_path}"
+        }
+  
+    if not path.is_file():
+        return {
+              "success": False,
+            "error": f"Path is not a file: {file_path}"
+        }
+  
+    try:
+        content = path.read_text(encoding = "utf-8")
+
+    except UnicodeDecodeError:
+        return {
+            "success": False,
+            "error": (
+                f"File is not valid UTF-8 text: "
+                f"{file_path}"
+            ),
+        }
+    except PermissionError:
+        return {
+            "success": False,
+            "error": (
+                f"Permission denied: {file_path}"
+            ),
+        }
+    except OSError as error:
+        return {
+            "success": False,
+            "error": str(error),
+        }
+
+    return {
+        "success": True,
+        "file_path": str(path),
+        "content": content,
+    }
+  
+
+def search_code(repo_path: str, keyword: str, max_results: int =20):
+    root = Path(repo_path)
+
+    if not root.exists():
+        return {
+            "success": False,
+            "error": f"Path not found: {repo_path}",
+        }
+
+    if not root.is_dir():
+        return {
+            "success": False,
+            "error": f"Path is not a directory: {repo_path}",
+        }
+
+    if not keyword.strip():
+        return {
+            "success": False,
+            "error": "Keyword cannot be empty",
+        }
+    
+    if max_results < 1:
+        return {
+            "success": False,
+            "error": "max_results must be at least 1",
+        }
+
+    matches = []
+    normalized_keyword = keyword.lower()
+
+    for file in root.rglob("*"):
+        if not file.is_file():
+            continue
+
+        if is_ignored(file):
+            continue
+
+        try:
+            content = file.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, PermissionError, OSError):
+            continue
+
+        lines = content.splitlines()
+
+        for line_number, line in enumerate(lines, start=1):
+            if normalized_keyword not in line.lower():
+                continue
+
+            matches.append({
+                "file": str(file),
+                "line": line_number,
+                "content": line.strip(),
+            })
+
+            if len(matches) >= max_results:
+                return {
+                    "success": True,
+                    "keyword": keyword,
+                    "matches": matches,
+                    "truncated": True,
+                }
+
+    return {
+        "success": True,
+        "keyword": keyword,
+        "matches": matches,
+        "truncated": False,
+    }
+
+
+def summarize_repository(repo_path: str, readme_max_chars: int = 2000):
     root = Path(repo_path)
 
     if not root.exists():
@@ -200,7 +269,7 @@ def summarize_repository(repo_path, readme_max_chars=2000):
         if not file.is_file():
             continue
 
-        if any(part in IGNORED_DIRECTORIES for part in file.parts):
+        if is_ignored(file):
             continue
 
         relative_path = file.relative_to(root)

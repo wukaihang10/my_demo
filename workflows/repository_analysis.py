@@ -1,13 +1,25 @@
 from agent.agent import Agent
+from typing import Any
 
 
-def analyze_repository(repo_url: str) -> str:
-    agent = Agent()
+def analyze_repository(repo_url: str) -> dict[str, Any]:
+   agent = Agent()
 
-    task = f"""
+   task = f"""
 Analyze the following GitHub repository:
 
 {repo_url}
+
+Follow this process:
+
+1. Clone the repository if it is not already available locally.
+2. Call summarize_repository to obtain a high-level overview.
+3. Use list_files only when you need a more detailed repository tree.
+4. Read the README if it exists.
+5. Read the most relevant source and configuration files.
+6. Use search_code when the location of an implementation is unclear.
+7. Do not read every file unless the repository is very small.
+8. Base every conclusion on repository evidence.
 
 Your final answer must include:
 
@@ -39,17 +51,21 @@ Your final answer must include:
    - How to install dependencies
    - How to start or test the project
 
-8. Uncertainties
-   - Clearly state anything that could not be confirmed
+8. Limitations and uncertainties
+   - Missing files or incomplete implementations
+   - Anything that could not be confirmed
 
 Requirements:
-- Use repository tools to inspect the actual files.
-- Read the README if it exists.
-- Inspect the repository structure.
-- Read the most relevant source and configuration files.
-- Use search_code when an implementation location is unclear.
+
 - Do not guess.
-- Do not claim something unless repository evidence supports it.
+- Do not claim anything unless repository evidence supports it.
+- Clearly distinguish confirmed facts from reasonable inferences.
+- If a tool fails, inspect the error and try a reasonable alternative.
 """
 
-    return agent.run(task)
+   answer = agent.run(task, max_steps=15)
+
+   return {
+      "answer": answer,
+      "trace": agent.trace.to_dict()
+   }
