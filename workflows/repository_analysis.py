@@ -63,9 +63,10 @@ Requirements:
 - If a tool fails, inspect the error and try a reasonable alternative.
 """
 
-   answer = agent.run(task, max_steps=15)
+   answer = agent.run(task, max_steps=15, repo_url = repo_url)
 
    return {
       "answer": answer,
-      "trace": agent.trace.to_dict()
+      "trace": agent.trace.to_dict(),
+      "state": agent.state.to_dict(),
    }

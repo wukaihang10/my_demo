@@ -4,6 +4,8 @@ import json
 import time
 from agent.trace import (AgentTrace, StepTrace, ToolTrace)
 from agent.observation import process_observation
+from agent.state import RepositoryState
+from agent.context import build_state_context
 
 TOOL_SCHEMAS = [
   tool.schema() for tool in TOOLS
@@ -33,6 +35,7 @@ class Agent:
   def __init__(self):
     self.tools = TOOL_MAP
     self.trace = AgentTrace()
+    self.state = RepositoryState()
   
   def _preview(self, value, max_chars: int = 500) -> str:
     try:
@@ -44,9 +47,57 @@ class Agent:
       return text
     
     return text[:max_chars] + "...[truncated]"
+  
 
-  def run(self, user_input: str, max_steps: int = 10) -> str:
+  def _update_state(self, tool_name: str, arguments: dict, result) -> None:
+    if not isinstance(result, dict):
+      return
+    
+    success = result.get("success", False)
+
+    if not success: 
+      error = result.get("error", f"Tool failed: {tool_name}")
+
+      self.state.add_error(str(error))
+      return
+    
+    if tool_name == "clone_repository":
+      repo_path = result.get("repo_path")
+
+      if repo_path:
+        self.state.repo_path = str(repo_path)
+      
+      self.state.phase = "understanding"
+
+    elif tool_name == "summarize_repository":
+      important_files = result.get("important_files", [])
+
+      self.state.important_files = list(dict.fromkeys(important_files))
+
+      repository_summary = result.get("repository_summary", {})
+
+      self.state.repository_summary = repository_summary
+
+      self.state.phase = "reading_code"
+
+    elif tool_name == "list_files":
+      files = result.get("files", [])
+      for file_path in files:
+        self.state.add_list_file(file_path)
+
+    elif tool_name == "read_files":
+      file_path = result.get("file_path") or arguments.get("file_path")
+      if file_path:
+        self.state.add_read_file(str(file_path))
+
+    elif tool_name == "search_code":
+      keyword = result.get("keyword") or arguments.get("keyword")
+      if keyword:
+        self.state.add_search_keyword(str(keyword))
+
+  def run(self, user_input: str, max_steps: int = 10, repo_url: str | None = None) -> str:
     self.trace = AgentTrace()
+    self.state = RepositoryState(repo_url = repo_url)
 
     if max_steps <= 0:
       self.trace.finish("invalid_max_steps")
@@ -68,7 +119,17 @@ class Agent:
 
       step_trace = StepTrace(step=step_number)
 
-      response = chat(messages, TOOL_SCHEMAS)
+      state_context = build_state_context(self.state)
+
+      request_messages = [
+        *messages,
+        {
+          "role": "system",
+          "content": state_context
+        }
+      ]
+
+      response = chat(request_messages, TOOL_SCHEMAS)
 
       if not response.tool_calls:
         final_response = response.content or ""
@@ -76,6 +137,8 @@ class Agent:
 
         self.trace.add_step(step_trace)
         self.trace.finish("completed")
+
+        self.state.phase = "completed"
 
         return final_response
 
@@ -108,7 +171,16 @@ class Agent:
     self.trace.finish("max_steps_reached")
 
     return "The agent reached the maximum number of steps before producing a final answer."
-      
+
+  def should_skip_tool(self, name: str, arguments: dict):
+    if name == "read_files":
+      file_path = arguments.get("file_path")
+
+      if file_path in self.state.read_files:
+        return True
+    
+    return False
+
   def execute_tool(self, tool_call)-> tuple[dict, ToolTrace]:
     name = tool_call.function.name
     started_at = time.perf_counter()
@@ -176,6 +248,27 @@ class Agent:
 
       return result, trace
 
+    if self.should_skip_tool(name, arguments):
+      result =  {
+        "success": False,
+        "error": f"{name} was already executed for this target."
+      }
+
+      duration_ms = (
+        time.perf_counter() - started_at) * 1000
+      
+      trace = ToolTrace(
+        tool_call_id=tool_call.id,
+        tool_name=name,
+        arguments=arguments,
+        success=False,
+        duration_ms=duration_ms,
+        result_preview=self._preview(result),
+        error=result["error"],
+      )
+
+      return result, trace
+
 
     tool = self.tools[name]
 
@@ -225,5 +318,7 @@ class Agent:
         result_preview=self._preview(result),
         error=error_message,
     )
+
+    self._update_state(tool_name = name, arguments = arguments, result = result)
 
     return result, trace

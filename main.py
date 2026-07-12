@@ -23,6 +23,16 @@ def main():
     print("\n===== Final Answer =====\n")
     print(result["answer"])
 
+
+    print("\n===== Repository State =====\n")
+
+    print(json.dumps(
+        result["state"],
+        ensure_ascii = False,
+        indent = 2
+    ))
+
+
     print("\n===== Agent Trace =====\n")
     print(
         json.dumps(
