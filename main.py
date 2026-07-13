@@ -6,9 +6,10 @@ from workflows.repository_analysis import (
 
 
 def main():
-    repository_url = input(
-        "Enter a GitHub repository URL: "
-    ).strip()
+    # repository_url = input(
+    #     "Enter a GitHub repository URL: "
+    # ).strip()
+    repository_url = "https://github.com/wukaihang10/my_demo"
 
     if not repository_url:
         print(

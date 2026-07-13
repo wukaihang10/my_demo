@@ -107,14 +107,18 @@ class Agent:
       if keyword:
         self.state.add_search_keyword(str(keyword))
 
-  def run(self, user_input: str, max_steps: int = 10, max_tool_calls = 30, repo_url: str | None = None) -> str:
-    self.trace = AgentTrace()
+  def run(self, user_input: str, max_steps: int = 10, max_tool_calls: int = 30, repo_url: str | None = None) -> str:
+    self.trace = AgentTrace(max_steps = max_steps, max_tool_calls = max_tool_calls)
     self.state = RepositoryState(repo_url = repo_url)
-    tool_call_count = 0
+    self.tool_history = ToolHistory()
 
     if max_steps <= 0:
       self.trace.finish("invalid_max_steps")
       return "max_steps must be greater than zero."
+    
+    if max_tool_calls <= 0:
+      self.trace.finish("invalid_max_tool_calls")
+      return "max_tool_calls must be greater than zero."
 
     messages = [
       {
@@ -155,18 +159,19 @@ class Agent:
 
         return final_response
 
-      #检查工具调用次数是否超了
-      tool_call_count += 1
-
-      if tool_call_count > max_tool_calls:
-        self.trace.finish("tool_budget_exceeded")
-
-        return "The agent exceeded the tool call budget."
-
       # 下面是工具调用循环
       messages.append(response.model_dump(exclude_none=True))
 
       for tool_call in response.tool_calls:
+        #检查工具调用次数是否超了
+
+        if self.trace.tool_calls_used >= max_tool_calls:
+          self.trace.finish("tool_budget_exceeded")
+
+          return "The agent reached the maximum number of allowed tool calls before producing a final answer."
+        
+        self.trace.record_tool_call()
+
         result, tool_trace = self.execute_tool(tool_call)
 
         step_trace.tool_calls.append(tool_trace)

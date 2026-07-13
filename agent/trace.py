@@ -20,6 +20,12 @@ class StepTrace:
 
 @dataclass
 class AgentTrace:
+  max_steps: int | None = None
+  max_tool_calls: int | None = None
+
+  steps_used: int = 0
+  tool_calls_used: int = 0
+
   started_at: str = field(
     default_factory=lambda: datetime.now(timezone.utc).isoformat()
   )
@@ -30,10 +36,28 @@ class AgentTrace:
 
   def add_step(self, step: StepTrace) -> None:
     self.steps.append(step)
+    self.steps_used += 1
+
+  def record_tool_call(self) -> None:
+    self.tool_calls_used += 1
 
   def finish(self, status: str) -> None:
     self.status = status
     self.finished_at = datetime.now(timezone.utc).isoformat()
 
   def to_dict(self) -> dict[str, Any]:
-    return asdict(self)
+    data = asdict(self)
+
+    if self.max_steps is None:
+      data["steps_remaining"] = None
+
+    else:
+      data["steps_remaining"] = max(self.max_steps - self.steps_used, 0)
+
+    if self.max_tool_calls is None:
+      data["tool_calls_remaining"] = None
+
+    else:
+      data["tool_calls_remaining"] = max(self.max_tool_calls - self.tool_calls_used, 0)
+
+    return data
