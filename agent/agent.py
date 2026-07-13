@@ -1,7 +1,10 @@
-from llm.client import (chat, LLMClientError)
-from tools.registry import (TOOLS, TOOL_MAP)
 import json
 import time
+import inspect
+from typing import Any
+
+from llm.client import (chat, LLMClientError)
+from tools.registry import (TOOLS, TOOL_MAP)
 from agent.trace import (AgentTrace, StepTrace, ToolTrace)
 from agent.observation import process_observation
 from agent.state import RepositoryState
@@ -106,6 +109,52 @@ class Agent:
       keyword = result.get("keyword") or arguments.get("keyword")
       if keyword:
         self.state.add_search_keyword(str(keyword))
+
+  def _finalize_tool_call(
+    self,
+    *,
+    tool_call_id: str,
+    tool_name: str,
+    arguments: dict[str, Any],
+    result: Any,
+    started_at: float,
+  ) -> tuple[dict[str, Any], ToolTrace]:
+    normalized_result = dict(result)
+
+    success = normalized_result["success"]
+    error_message: str | None = None
+
+    if not success:
+      error_message = str(
+        normalized_result.get("error")
+        or f"Tool failed: {tool_name}"
+      )
+
+      normalized_result["error"] = error_message
+
+    duration_ms = (
+      time.perf_counter() - started_at
+    ) * 1000
+
+    trace = ToolTrace(
+      tool_call_id=tool_call_id,
+      tool_name=tool_name,
+      arguments=arguments,
+      success=success,
+      duration_ms=duration_ms,
+      result_preview=self._preview(
+        normalized_result
+      ),
+      error=error_message,
+    )
+
+    self._update_state(
+      tool_name=tool_name,
+      arguments=arguments,
+      result=normalized_result,
+    )
+
+    return normalized_result, trace
 
   def run(self, user_input: str, max_steps: int = 10, max_tool_calls: int = 30, repo_url: str | None = None) -> str:
     self.trace = AgentTrace(max_steps = max_steps, max_tool_calls = max_tool_calls)
@@ -224,19 +273,13 @@ class Agent:
         "error": f"Invalid JSON arguments: {error}"
       }
 
-      duration_ms = (time.perf_counter() - started_at) * 1000
-
-      trace = ToolTrace(
+      return self._finalize_tool_call(
         tool_call_id = tool_call.id,
         tool_name = name,
         arguments = {},
-        success = False,
-        duration_ms = duration_ms,
-        result_preview = self._preview(result),
-        error = result["error"]
+        result = result,
+        started_at = started_at,
       )
-
-      return result, trace
 
     if not isinstance(arguments, dict):
       result = {
@@ -244,18 +287,13 @@ class Agent:
         "error": "Tool arguments must be a JSON object",
       }
 
-      duration_ms = (time.perf_counter() - started_at) * 1000
-      trace = ToolTrace(
-        tool_call_id=tool_call.id,
-        tool_name=name,
-        arguments={},
-        success=False,
-        duration_ms=duration_ms,
-        result_preview=self._preview(result),
-        error=result["error"],
+      return self._finalize_tool_call(
+        tool_call_id = tool_call.id,
+        tool_name = name,
+        arguments = {},
+        result = result,
+        started_at = started_at,
       )
-
-      return result, trace
 
     if name not in self.tools:
       result = {
@@ -263,20 +301,13 @@ class Agent:
           "error": f"Tool does not exist: {name}",
       }
 
-      duration_ms = (
-        time.perf_counter() - started_at) * 1000
-
-      trace = ToolTrace(
-        tool_call_id=tool_call.id,
-        tool_name=name,
-        arguments=arguments,
-        success=False,
-        duration_ms=duration_ms,
-        result_preview=self._preview(result),
-        error=result["error"],
-      )
-
-      return result, trace
+      return self._finalize_tool_call(
+        tool_call_id = tool_call.id,
+        tool_name = name,
+        arguments = arguments,
+        result = result,
+        started_at = started_at,
+      )      
 
     if self.tool_history.repeated(name, arguments):
       result = {
@@ -284,34 +315,39 @@ class Agent:
         "error": "Repeated tool call detected. Try another approach."
       }
 
-      duration_ms = (
-        time.perf_counter() - started_at) * 1000
-
-      trace = ToolTrace(
-        tool_call_id=tool_call.id,
-        tool_name=name,
-        arguments=arguments,
-        success=False,
-        duration_ms=duration_ms,
-        result_preview=self._preview(result),
-        error=result["error"],
-      )
-
-      return result, trace
+      return self._finalize_tool_call(
+        tool_call_id = tool_call.id,
+        tool_name = name,
+        arguments = arguments,
+        result = result,
+        started_at = started_at,
+      )  
     
     tool = self.tools[name]
 
-    self.tool_history.add(name, arguments) #不管工具调用失败与否都记录；因为工具调用失败也能在下次llm调用错误的工具时提前发现
-
-    try:
-      result = tool.execute(**arguments)
-
+    try: # 把arguments的TypeError和工具内部的TypeError bug分开。
+      #还有个点，python里参数的类型默认只是提示，不会做运行时校验，所以传入参数如果类型不对并不会触发TypeError。现在只会检测参数名是否正确、必须参数是否齐全、是否传入多余参数、位置参数和关键字参数是否冲突。
+      signature = inspect.signature(tool.execute)
+      signature.bind(**arguments)
 
     except TypeError as error:
       result = {
         "success": False,
-        "error": f"Invalid tool parameters: {error}",
+        "error": f"Invalid tool parameters: {error}"
       }
+
+      return self._finalize_tool_call(
+        tool_call_id = tool_call.id,
+        tool_name = name,
+        arguments = arguments,
+        result = result,
+        started_at = started_at,
+      )  
+
+    self.tool_history.add(name, arguments) #记录多少次参数合法的工具执行尝试
+
+    try:
+      result = tool.execute(**arguments)
     
     except Exception as error:
       result = {
@@ -330,27 +366,10 @@ class Agent:
         "error": "Tool returned an invalid result: missing boolean success",
       }
     
-    duration_ms = (
-        time.perf_counter() - started_at
-    ) * 1000
-
-    success = result["success"]
-
-    error_message = None
-
-    if not success:
-        error_message = result.get("error")
-
-    trace = ToolTrace(
-        tool_call_id=tool_call.id,
-        tool_name=name,
-        arguments=arguments,
-        success=bool(success),
-        duration_ms=duration_ms,
-        result_preview=self._preview(result),
-        error=error_message,
-    )
-
-    self._update_state(tool_name = name, arguments = arguments, result = result)
-
-    return result, trace
+    return self._finalize_tool_call(
+      tool_call_id = tool_call.id,
+      tool_name = name,
+      arguments = arguments,
+      result = result,
+      started_at = started_at,
+    )  
