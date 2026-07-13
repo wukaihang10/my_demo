@@ -6,7 +6,7 @@ class RepositoryState:
   repo_url: str | None = None
   repo_path: str | None = None
 
-  phase: str = "initial" #initial, cloning, understanding, reading_code, summarizing, completed
+  phase: str = "initial" #initial, cloning, understanding, reading_code, summarizing, completed, failed
 
   repository_summary: dict[str, Any] | None = None
 

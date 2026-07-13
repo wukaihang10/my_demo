@@ -1,4 +1,4 @@
-from llm.client import chat
+from llm.client import (chat, LLMClientError)
 from tools.registry import (TOOLS, TOOL_MAP)
 import json
 import time
@@ -145,8 +145,20 @@ class Agent:
           "content": state_context
         }
       ]
+      try:
+        response = chat(request_messages, TOOL_SCHEMAS)
+      except LLMClientError as error:
+        error_message = f"LLM request failed at step{step_number}: {error}"
 
-      response = chat(request_messages, TOOL_SCHEMAS)
+        step_trace.error = error_message
+
+        self.state.add_error(error_message)
+        self.state.phase = "failed"
+
+        self.trace.add_step(step_trace)
+        self.trace.finish("llm_error")
+
+        return "The language model request failed before the agent could complete the task. Check the repository state and agent trace for details."
 
       if not response.tool_calls:
         final_response = response.content or ""
@@ -166,6 +178,7 @@ class Agent:
         #检查工具调用次数是否超了
 
         if self.trace.tool_calls_used >= max_tool_calls:
+          self.trace.add_step(step_trace)
           self.trace.finish("tool_budget_exceeded")
 
           return "The agent reached the maximum number of allowed tool calls before producing a final answer."
