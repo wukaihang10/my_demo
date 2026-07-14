@@ -108,6 +108,20 @@ def test_run_returns_direct_final_answer(monkeypatch,) -> None:
   assert len(agent.trace.steps) == 1
   assert(agent.trace.steps[0].final_response == "Repository analysis completed.")
 
+  assert agent.state.plan is not None
+  assert agent.state.plan.status == "completed"
+  assert agent.state.plan.current_step is None
+
+  assert all(
+  step.status == "skipped" for step in agent.state.plan.steps[:-1]
+  )
+
+  final_step = agent.state.plan.steps[-1]
+
+  assert final_step.status == "completed"
+  assert final_step.result == "Repository analysis completed."
+
+
 
 def test_run_executes_tool_then_returns_answer(
     monkeypatch,
@@ -258,6 +272,14 @@ def test_run_stops_when_tool_budget_is_exhausted(
   assert len(agent.trace.steps) == 1
   assert len(agent.trace.steps[0].tool_calls) == 1
 
+  assert agent.state.phase == "failed"
+  assert agent.state.plan is not None
+  assert agent.state.plan.status == "failed"
+  assert agent.state.plan.current_step is not None
+  assert agent.state.plan.current_step.status == "failed"
+
+  assert len(agent.state.errors) == 1
+
 
 def test_run_records_llm_error(
   monkeypatch,
@@ -300,3 +322,48 @@ def test_run_records_llm_error(
   assert "simulated connection failure" in (
     step.error
   )
+
+  assert agent.state.plan is not None
+  assert agent.state.plan.status == "failed"
+  assert agent.state.plan.current_step is not None
+  assert agent.state.plan.current_step.status == "failed"
+
+  assert "simulated connection failure" in (agent.state.plan.current_step.error or "")
+
+
+def test_run_rejects_invalid_max_steps() -> None:
+  agent = Agent()
+
+  answer = agent.run(
+    user_input="Analyze repository.",
+    max_steps=0,
+    max_tool_calls=3,
+    )
+
+  assert answer == "max_steps must be greater than zero."
+
+  assert agent.trace.status == "invalid_max_steps"
+  assert agent.state.phase == "failed"
+
+  assert agent.state.plan is not None
+  assert agent.state.plan.status == "failed"
+  assert agent.state.plan.current_step is not None
+  assert agent.state.plan.current_step.status == "failed"
+
+
+def test_run_rejects_invalid_tool_budget() -> None:
+  agent = Agent()
+
+  answer = agent.run(
+    user_input="Analyze repository.",
+    max_steps=3,
+    max_tool_calls=0,
+  )
+
+  assert answer == "max_tool_calls must be greater than zero."
+
+  assert agent.trace.status == "invalid_max_tool_calls"
+  assert agent.state.phase == "failed"
+
+  assert agent.state.plan is not None
+  assert agent.state.plan.status == "failed"

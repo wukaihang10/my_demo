@@ -1,68 +1,144 @@
+from typing import Any
+
 from agent.state import RepositoryState
 
-def build_state_context(state: RepositoryState) -> str:
+def _format_summary_value(value: Any) -> str:
+  if isinstance(value, dict):
+    return ",".join(
+      f"{key}={item}" for key, item in value.items()
+    )
+  
+  if isinstance(value, (list, tuple, set)):
+    return ",".join(str(item) for item in value)
+  
+  return str(value)
 
-  sections = []
+
+def _build_plan_section(state: RepositoryState,) -> str | None:
+  plan = state.plan
+
+  if plan is None:
+    return None
+  
+  lines = [
+    f"Goal: {plan.goal}",
+    f"Plan status: {plan.status}"
+  ]
+
+  current_step = plan.current_step
+
+  if current_step is None:
+    lines.append("Current step: none")
+  else:
+    lines.extend(
+      [
+        (
+          f"Current step: {current_step.id}. "
+          f"{current_step.description}"
+        ),
+        (
+          "Current step status: "
+          f"{current_step.status}"
+        ),
+      ]
+    )
+
+    if current_step.expected_evidence:
+      lines.append(
+        "Expected evidence: "
+        f"{current_step.expected_evidence}"
+      )
+  
+  lines.append("Plan steps:")
+
+  for index, step in enumerate(plan.steps):
+    marker = "->" if index == plan.current_step_index else "  "
+
+    lines.append(
+      f"{marker} [{step.status}] "
+      f"{step.id}. {step.description}"
+    )
+
+    if step.result:
+      lines.append(f"  Result: {step.result}")
+
+    if step.error:
+      lines.append(f"  Error: {step.error}")
+
+  return "\n".join(lines)
+
+
+def _build_repository_section(state:RepositoryState,) -> str:
+  lines = [f"Current phase: {state.phase}"]
+
+  if state.repo_url:
+    lines.append(f"Repository URL: {state.repo_url}")
 
   if state.repo_path:
-    sections.append(
-      f"""
-Repository path: {state.repo_path}
-"""
-    )
+    lines.append(f"Repository path: {state.repo_path}")
 
-  if state.phase:
-    sections.append(
-      f"""
-Current phase:
-{state.phase}
-"""
-    )
+  if state.repository_summary:
+    lines.append("Repository summary:")
 
+    for key, value in state.repository_summary.items():
+      formatted_value = _format_summary_value(value)
+
+      lines.append(f"- {key}: {formatted_value}")
+
+  if state.listed_files:
+    lines.append(
+      f"Number of files already listed:"
+      f"{len(state.listed_files)}"
+    )
+  
   if state.important_files:
-    sections.append(
-      """
-Important files discovered:
-"""
-      + "\n".join(f"- {file}" for file in state.important_files)    
+    lines.append("Important files discovered:")
+    lines.extend(
+      f"- {file_path}"
+      for file_path in state.important_files
     )
-
+  
   if state.read_files:
-    sections.append(
-      """
-Files already inspected:
-"""
-      + "\n".join(f"- {file}" for file in state.read_files)
+    lines.append("Files already inspected:")
+    lines.extend(
+      f"- {file_path}"
+      for file_path in state.read_files
     )
 
   if state.searched_keywords:
-    sections.append(
-      """
-Keywords already searched:
-"""
-      + "\n".join(f"- {keyword}" for keyword in state.searched_keywords)
+    lines.append("Keywords already searched:")
+    lines.extend(
+      f"- {keyword}"
+      for keyword in state.searched_keywords
+    )
+  
+  if state.findings:
+    lines.append("Findings gathered:")
+    lines.extend(
+      f"- {finding}"
+      for finding in state.findings
     )
 
   if state.errors:
-    sections.append(
-      """
-Previous errors:
-"""
-      + "\n".join(f"- {error}" for error in state.errors)
+    lines.append("Previous errors:")
+    lines.extend(
+      f"- {error}"
+      for error in state.errors
     )
+  
+  return "\n".join(lines)
 
-  if not sections:
-    return """
-No repository state available yet.
-"""
 
-  return ("""
-Current repository analysis state:
-"""  
-          + 
-          "\n\n".join(sections)
-          +
-          """
-Use this information to avoid repeating unnecessary actions.
-"""
-          )
+def build_state_context(state: RepositoryState) -> str:
+  sections: list[str] = []
+
+  plan_section = _build_plan_section(state)
+
+  if plan_section is not None:
+    sections.append(f"Task plan:\n{plan_section}")
+
+  repository_section = _build_repository_section(state)
+
+  sections.append(f"Repository analysis state:\n{repository_section}")
+
+  return "Current agent state:\n\n" + "\n\n".join(sections) + "\n\nUse this state to choose the next action. Do not repeat completed work unless it is necessary. Focus on the current plan step."

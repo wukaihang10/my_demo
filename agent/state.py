@@ -1,12 +1,16 @@
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
+from agent.plan import AgentPlan
+
 @dataclass
 class RepositoryState:
   repo_url: str | None = None
   repo_path: str | None = None
 
   phase: str = "initial" #initial, cloning, understanding, reading_code, summarizing, completed, failed
+
+  plan: AgentPlan | None = None
 
   repository_summary: dict[str, Any] | None = None
 

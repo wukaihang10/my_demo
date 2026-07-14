@@ -10,6 +10,7 @@ from agent.observation import process_observation
 from agent.state import RepositoryState
 from agent.context import build_state_context
 from agent.history import ToolHistory
+from agent.plan import build_repository_analysis_plan
 
 TOOL_SCHEMAS = [
   tool.schema() for tool in TOOLS
@@ -158,16 +159,37 @@ class Agent:
 
   def run(self, user_input: str, max_steps: int = 10, max_tool_calls: int = 30, repo_url: str | None = None) -> str:
     self.trace = AgentTrace(max_steps = max_steps, max_tool_calls = max_tool_calls)
-    self.state = RepositoryState(repo_url = repo_url)
+
+    plan = build_repository_analysis_plan(goal = user_input)
+    plan.start()
+
+    self.state = RepositoryState(repo_url = repo_url, plan = plan)
     self.tool_history = ToolHistory()
 
     if max_steps <= 0:
+      error_message = "max_steps must be greater than zero."
+
+      self.state.add_error(error_message)
+      self.state.phase = "failed"
+
+      if self.state.plan is not None:
+        self.state.plan.fail(error_message)
+
       self.trace.finish("invalid_max_steps")
-      return "max_steps must be greater than zero."
+
+      return error_message
     
     if max_tool_calls <= 0:
+      error_message = "max_tool_calls must be greater than zero."
+
+      self.state.add_error(error_message)
+      self.state.phase = "failed"
+
+      if self.state.plan is not None:
+        self.state.plan.fail(error_message)
+
       self.trace.finish("invalid_max_tool_calls")
-      return "max_tool_calls must be greater than zero."
+      return error_message
 
     messages = [
       {
@@ -197,12 +219,15 @@ class Agent:
       try:
         response = chat(request_messages, TOOL_SCHEMAS)
       except LLMClientError as error:
-        error_message = f"LLM request failed at step{step_number}: {error}"
+        error_message = f"LLM request failed at step {step_number}: {error}"
 
         step_trace.error = error_message
 
         self.state.add_error(error_message)
         self.state.phase = "failed"
+        
+        if self.state.plan is not None:
+          self.state.plan.fail(error_message)
 
         self.trace.add_step(step_trace)
         self.trace.finish("llm_error")
@@ -218,6 +243,9 @@ class Agent:
 
         self.state.phase = "completed"
 
+        if self.state.plan is not None:
+          self.state.plan.finish(result = final_response)
+
         return final_response
 
       # 下面是工具调用循环
@@ -227,10 +255,18 @@ class Agent:
         #检查工具调用次数是否超了
 
         if self.trace.tool_calls_used >= max_tool_calls:
+          error_message = "The agent reached the maximum number of allowed tool calls before producing a final answer."
+
           self.trace.add_step(step_trace)
           self.trace.finish("tool_budget_exceeded")
 
-          return "The agent reached the maximum number of allowed tool calls before producing a final answer."
+          self.state.add_error(error_message)
+          self.state.phase = "failed"
+
+          if self.state.plan is not None:
+            self.state.plan.fail(error_message)
+
+          return error_message
         
         self.trace.record_tool_call()
 
@@ -256,9 +292,19 @@ class Agent:
         
       self.trace.add_step(step_trace)
       
+
+    error_messgae = "The agent reached the maximum number of steps before producing a final answer."
+
+    self.trace.add_step(step_trace)
     self.trace.finish("max_steps_reached")
 
-    return "The agent reached the maximum number of steps before producing a final answer."
+    self.state.add_error(error_message)
+    self.state.phase = "failed"
+
+    if self.state.phase is not None:
+      self.state.plan.fail(error_message)
+
+    return error_message
 
   def execute_tool(self, tool_call)-> tuple[dict, ToolTrace]:
     name = tool_call.function.name
