@@ -25,6 +25,12 @@ def _build_plan_section(state: RepositoryState,) -> str | None:
     f"Plan status: {plan.status}"
   ]
 
+  if plan.result:
+    lines.append(f"Plan result: {plan.result}")
+
+  if plan.error:
+    lines.append(f"Plan error: {plan.error}")
+
   current_step = plan.current_step
 
   if current_step is None:
@@ -43,10 +49,10 @@ def _build_plan_section(state: RepositoryState,) -> str | None:
       ]
     )
 
-    if current_step.expected_evidence:
+    if current_step.completion_criteria:
       lines.append(
         "Expected evidence: "
-        f"{current_step.expected_evidence}"
+        f"{current_step.completion_criteria}"
       )
   
   lines.append("Plan steps:")

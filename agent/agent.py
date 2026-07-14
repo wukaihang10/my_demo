@@ -10,7 +10,8 @@ from agent.observation import process_observation
 from agent.state import RepositoryState
 from agent.context import build_state_context
 from agent.history import ToolHistory
-from agent.plan import build_repository_analysis_plan
+# from agent.plan import build_repository_analysis_plan
+from agent.planner import LLMPlanner, PlannerError
 
 TOOL_SCHEMAS = [
   tool.schema() for tool in TOOLS
@@ -42,6 +43,7 @@ class Agent:
     self.trace = AgentTrace()
     self.state = RepositoryState()
     self.tool_history = ToolHistory()
+    self.planner = LLMPlanner()
   
   def _preview(self, value, max_chars: int = 500) -> str:
     try:
@@ -157,13 +159,16 @@ class Agent:
 
     return normalized_result, trace
 
-  def run(self, user_input: str, max_steps: int = 10, max_tool_calls: int = 30, repo_url: str | None = None) -> str:
-    self.trace = AgentTrace(max_steps = max_steps, max_tool_calls = max_tool_calls)
+  def run(
+      self, 
+      user_input: str, 
+      max_steps: int = 10, max_tool_calls: int = 30, repo_url: str | None = None) -> str:
+    self.trace = AgentTrace(
+      max_steps = max_steps, max_tool_calls = max_tool_calls,
+    )
 
-    plan = build_repository_analysis_plan(goal = user_input)
-    plan.start()
+    self.state = RepositoryState(repo_url = repo_url)
 
-    self.state = RepositoryState(repo_url = repo_url, plan = plan)
     self.tool_history = ToolHistory()
 
     if max_steps <= 0:
@@ -190,6 +195,20 @@ class Agent:
 
       self.trace.finish("invalid_max_tool_calls")
       return error_message
+
+    try:
+      plan = self.planner.create_plan(user_input)
+      plan.start()
+    except PlannerError as error:
+      error_message = f"Agent planning failed: {error}"
+
+      self.state.add_error(error_message)
+      self.state.phase = "failed"
+      self.trace.finish("planning_error")
+
+      return error_message
+  
+    self.state.plan = plan
 
     messages = [
       {
@@ -293,15 +312,15 @@ class Agent:
       self.trace.add_step(step_trace)
       
 
-    error_messgae = "The agent reached the maximum number of steps before producing a final answer."
+    error_message = "The agent reached the maximum number of steps before producing a final answer."
 
-    self.trace.add_step(step_trace)
+    # self.trace.add_step(step_trace)
     self.trace.finish("max_steps_reached")
 
     self.state.add_error(error_message)
     self.state.phase = "failed"
 
-    if self.state.phase is not None:
+    if self.state.plan is not None:
       self.state.plan.fail(error_message)
 
     return error_message
