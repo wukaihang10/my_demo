@@ -2,149 +2,123 @@ from typing import Any
 
 from agent.state import RepositoryState
 
+
 def _format_summary_value(value: Any) -> str:
-  if isinstance(value, dict):
-    return ",".join(
-      f"{key}={item}" for key, item in value.items()
-    )
-  
-  if isinstance(value, (list, tuple, set)):
-    return ",".join(str(item) for item in value)
-  
-  return str(value)
+    if isinstance(value, dict):
+        return ",".join(f"{key}={item}" for key, item in value.items())
+
+    if isinstance(value, (list, tuple, set)):
+        return ",".join(str(item) for item in value)
+
+    return str(value)
 
 
-def _build_plan_section(state: RepositoryState,) -> str | None:
-  plan = state.plan
+def _build_plan_section(
+    state: RepositoryState,
+) -> str | None:
+    plan = state.plan
 
-  if plan is None:
-    return None
-  
-  lines = [
-    f"Goal: {plan.goal}",
-    f"Plan status: {plan.status}"
-  ]
+    if plan is None:
+        return None
 
-  if plan.result:
-    lines.append(f"Plan result: {plan.result}")
+    lines = [f"Goal: {plan.goal}", f"Plan status: {plan.status}"]
 
-  if plan.error:
-    lines.append(f"Plan error: {plan.error}")
+    if plan.result:
+        lines.append(f"Plan result: {plan.result}")
 
-  current_step = plan.current_step
+    if plan.error:
+        lines.append(f"Plan error: {plan.error}")
 
-  if current_step is None:
-    lines.append("Current step: none")
-  else:
-    lines.extend(
-      [
-        (
-          f"Current step: {current_step.id}. "
-          f"{current_step.description}"
-        ),
-        (
-          "Current step status: "
-          f"{current_step.status}"
-        ),
-      ]
-    )
+    current_step = plan.current_step
 
-    if current_step.completion_criteria:
-      lines.append(
-        "Completion criteria: "
-        f"{current_step.completion_criteria}"
-      )
-  
-  lines.append("Plan steps:")
+    if current_step is None:
+        lines.append("Current step: none")
+    else:
+        lines.extend(
+            [
+                (f"Current step: {current_step.id}. " f"{current_step.description}"),
+                ("Current step status: " f"{current_step.status}"),
+            ]
+        )
 
-  for index, step in enumerate(plan.steps):
-    marker = "->" if index == plan.current_step_index else "  "
+        if current_step.completion_criteria:
+            lines.append("Completion criteria: " f"{current_step.completion_criteria}")
 
-    lines.append(
-      f"{marker} [{step.status}] "
-      f"{step.id}. {step.description}"
-    )
+    lines.append("Plan steps:")
 
-    if step.result:
-      lines.append(f"  Result: {step.result}")
+    for index, step in enumerate(plan.steps):
+        marker = "->" if index == plan.current_step_index else "  "
 
-    if step.error:
-      lines.append(f"  Error: {step.error}")
+        lines.append(f"{marker} [{step.status}] " f"{step.id}. {step.description}")
 
-  return "\n".join(lines)
+        if step.result:
+            lines.append(f"  Result: {step.result}")
+
+        if step.error:
+            lines.append(f"  Error: {step.error}")
+
+    return "\n".join(lines)
 
 
-def _build_repository_section(state:RepositoryState,) -> str:
-  lines = [f"Current phase: {state.phase}"]
+def _build_repository_section(
+    state: RepositoryState,
+) -> str:
+    lines = [f"Current phase: {state.phase}"]
 
-  if state.repo_url:
-    lines.append(f"Repository URL: {state.repo_url}")
+    if state.repo_url:
+        lines.append(f"Repository URL: {state.repo_url}")
 
-  if state.repo_path:
-    lines.append(f"Repository path: {state.repo_path}")
+    if state.repo_path:
+        lines.append(f"Repository path: {state.repo_path}")
 
-  if state.repository_summary:
-    lines.append("Repository summary:")
+    if state.repository_summary:
+        lines.append("Repository summary:")
 
-    for key, value in state.repository_summary.items():
-      formatted_value = _format_summary_value(value)
+        for key, value in state.repository_summary.items():
+            formatted_value = _format_summary_value(value)
 
-      lines.append(f"- {key}: {formatted_value}")
+            lines.append(f"- {key}: {formatted_value}")
 
-  if state.listed_files:
-    lines.append(
-      f"Number of files already listed:"
-      f"{len(state.listed_files)}"
-    )
-  
-  if state.important_files:
-    lines.append("Important files discovered:")
-    lines.extend(
-      f"- {file_path}"
-      for file_path in state.important_files
-    )
-  
-  if state.read_files:
-    lines.append("Files already inspected:")
-    lines.extend(
-      f"- {file_path}"
-      for file_path in state.read_files
-    )
+    if state.listed_files:
+        lines.append(f"Number of files already listed:" f"{len(state.listed_files)}")
 
-  if state.searched_keywords:
-    lines.append("Keywords already searched:")
-    lines.extend(
-      f"- {keyword}"
-      for keyword in state.searched_keywords
-    )
-  
-  if state.findings:
-    lines.append("Findings gathered:")
-    lines.extend(
-      f"- {finding}"
-      for finding in state.findings
-    )
+    if state.important_files:
+        lines.append("Important files discovered:")
+        lines.extend(f"- {file_path}" for file_path in state.important_files)
 
-  if state.errors:
-    lines.append("Previous errors:")
-    lines.extend(
-      f"- {error}"
-      for error in state.errors
-    )
-  
-  return "\n".join(lines)
+    if state.read_files:
+        lines.append("Files already inspected:")
+        lines.extend(f"- {file_path}" for file_path in state.read_files)
+
+    if state.searched_keywords:
+        lines.append("Keywords already searched:")
+        lines.extend(f"- {keyword}" for keyword in state.searched_keywords)
+
+    if state.findings:
+        lines.append("Findings gathered:")
+        lines.extend(f"- {finding}" for finding in state.findings)
+
+    if state.errors:
+        lines.append("Previous errors:")
+        lines.extend(f"- {error}" for error in state.errors)
+
+    return "\n".join(lines)
 
 
 def build_state_context(state: RepositoryState) -> str:
-  sections: list[str] = []
+    sections: list[str] = []
 
-  plan_section = _build_plan_section(state)
+    plan_section = _build_plan_section(state)
 
-  if plan_section is not None:
-    sections.append(f"Task plan:\n{plan_section}")
+    if plan_section is not None:
+        sections.append(f"Task plan:\n{plan_section}")
 
-  repository_section = _build_repository_section(state)
+    repository_section = _build_repository_section(state)
 
-  sections.append(f"Repository analysis state:\n{repository_section}")
+    sections.append(f"Repository analysis state:\n{repository_section}")
 
-  return "Current agent state:\n\n" + "\n\n".join(sections) + "\n\nUse this state to choose the next action. Do not repeat completed work unless it is necessary. Focus on the current plan step."
+    return (
+        "Current agent state:\n\n"
+        + "\n\n".join(sections)
+        + "\n\nUse this state to choose the next action. Do not repeat completed work unless it is necessary. Focus on the current plan step."
+    )

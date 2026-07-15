@@ -72,11 +72,9 @@ IMPORTANT_FILENAMES = {
     "manage.py",
 }
 
+
 def is_ignored(path: Path) -> bool:
-    return any(
-        part in IGNORED_DIRECTORIES
-        for part in path.parts
-    )
+    return any(part in IGNORED_DIRECTORIES for part in path.parts)
 
 
 def iter_repository_files(root: Path):
@@ -87,8 +85,7 @@ def iter_repository_files(root: Path):
         dirnames[:] = [
             name
             for name in dirnames
-            if not is_ignored(relative_dir / name)
-            and not (current / name).is_symlink()
+            if not is_ignored(relative_dir / name) and not (current / name).is_symlink()
         ]
 
         for filename in filenames:
@@ -109,19 +106,16 @@ def iter_repository_files(root: Path):
 
 def list_files(repo_path: str, max_files: int = 200):
     root = Path(repo_path).resolve()
-    
+
     if not root.exists():
-        return {
-            "success": False,
-            "error": f"Path does not exist: {repo_path}" 
-        }
+        return {"success": False, "error": f"Path does not exist: {repo_path}"}
 
     if not root.is_dir():
         return {
             "success": False,
             "error": f"Path is not a directory: {repo_path}",
         }
-    
+
     if not 1 <= max_files <= MAX_LIST_FILES:
         return {
             "success": False,
@@ -157,21 +151,15 @@ def read_file(repo_path: str, file_path: str, max_chars: int = 8000):
     if not root.exists():
         return {
             "success": False,
-            "error": (
-                f"Repository path not found: "
-                f"{repo_path}"
-            ),
+            "error": (f"Repository path not found: " f"{repo_path}"),
         }
 
     if not root.is_dir():
         return {
             "success": False,
-            "error": (
-                f"Repository path is not a directory: "
-                f"{repo_path}"
-            ),
+            "error": (f"Repository path is not a directory: " f"{repo_path}"),
         }
-    
+
     if not 1 <= max_chars <= MAX_READ_CHARS:
         return {
             "success": False,
@@ -183,25 +171,16 @@ def read_file(repo_path: str, file_path: str, max_chars: int = 8000):
         path.relative_to(root)
 
     except ValueError:
-        return {
-            "success": False,
-            "error": "File path must stay inside the repository"
-        }
-    
+        return {"success": False, "error": "File path must stay inside the repository"}
+
     if not path.exists():
-        return {
-            "success": False,
-            "error": f"File not found: {file_path}"
-        }
-  
+        return {"success": False, "error": f"File not found: {file_path}"}
+
     if not path.is_file():
-        return {
-              "success": False,
-            "error": f"Path is not a file: {file_path}"
-        }
-  
+        return {"success": False, "error": f"Path is not a file: {file_path}"}
+
     try:
-        content = path.read_text(encoding = "utf-8")
+        content = path.read_text(encoding="utf-8")
 
         truncated = False
 
@@ -212,17 +191,12 @@ def read_file(repo_path: str, file_path: str, max_chars: int = 8000):
     except UnicodeDecodeError:
         return {
             "success": False,
-            "error": (
-                f"File is not valid UTF-8 text: "
-                f"{file_path}"
-            ),
+            "error": (f"File is not valid UTF-8 text: " f"{file_path}"),
         }
     except PermissionError:
         return {
             "success": False,
-            "error": (
-                f"Permission denied: {file_path}"
-            ),
+            "error": (f"Permission denied: {file_path}"),
         }
     except OSError as error:
         return {
@@ -237,7 +211,7 @@ def read_file(repo_path: str, file_path: str, max_chars: int = 8000):
         "content": content,
         "truncated": truncated,
     }
-  
+
 
 def search_code(repo_path: str, keyword: str, max_results: int = 20):
     root = Path(repo_path).resolve()
@@ -259,13 +233,11 @@ def search_code(repo_path: str, keyword: str, max_results: int = 20):
             "success": False,
             "error": "Keyword cannot be empty",
         }
-    
+
     if not 1 <= max_results <= MAX_SEARCH_RESULTS:
         return {
             "success": False,
-            "error": (
-                f"max_results must be between 1 and {MAX_SEARCH_RESULTS}"
-            ),
+            "error": (f"max_results must be between 1 and {MAX_SEARCH_RESULTS}"),
         }
 
     matches = []
@@ -283,11 +255,13 @@ def search_code(repo_path: str, keyword: str, max_results: int = 20):
             if normalized_keyword not in line.lower():
                 continue
 
-            matches.append({
-                "file_path": relative_path.as_posix(),
-                "line": line_number,
-                "content": line.strip(),
-            })
+            matches.append(
+                {
+                    "file_path": relative_path.as_posix(),
+                    "line": line_number,
+                    "content": line.strip(),
+                }
+            )
 
             if len(matches) >= max_results:
                 return {

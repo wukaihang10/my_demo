@@ -3,23 +3,22 @@ from types import SimpleNamespace
 import pytest
 
 from agent.planner import (
-  LLMPlanner,
-  PlannerResponseError,
+    LLMPlanner,
+    PlannerResponseError,
 )
 
 
 def make_response(content: str):
-  return SimpleNamespace(
-      content=content,
-  )
+    return SimpleNamespace(
+        content=content,
+    )
 
 
 def test_create_plan_from_valid_response() -> None:
-  def fake_chat(messages, tools):
-    assert tools == []
+    def fake_chat(messages, tools):
+        assert tools == []
 
-    return make_response(
-      """
+        return make_response("""
       {
         "steps": [
           {
@@ -32,31 +31,29 @@ def test_create_plan_from_valid_response() -> None:
           }
         ]
       }
-      """
+      """)
+
+    planner = LLMPlanner(
+        max_plan_steps=4,
+        chat_function=fake_chat,
     )
 
-  planner = LLMPlanner(
-    max_plan_steps=4,
-    chat_function=fake_chat,
-  )
+    plan = planner.create_plan("Explain the target project.")
 
-  plan = planner.create_plan("Explain the target project.")
+    assert plan.goal == "Explain the target project."
+    assert plan.status == "pending"
+    assert len(plan.steps) == 2
 
-  assert plan.goal == "Explain the target project."
-  assert plan.status == "pending"
-  assert len(plan.steps) == 2
+    assert plan.steps[0].id == 1
+    assert plan.steps[1].id == 2
 
-  assert plan.steps[0].id == 1
-  assert plan.steps[1].id == 2
-
-  assert plan.steps[0].status == "pending"
-  assert plan.steps[0].description == "Inspect the available information."
+    assert plan.steps[0].status == "pending"
+    assert plan.steps[0].description == "Inspect the available information."
 
 
 def test_planner_rejects_runtime_fields() -> None:
-  def fake_chat(messages, tools):
-    return make_response(
-      """
+    def fake_chat(messages, tools):
+        return make_response("""
       {
         "steps": [
           {
@@ -66,24 +63,22 @@ def test_planner_rejects_runtime_fields() -> None:
           }
         ]
       }
-      """
+      """)
+
+    planner = LLMPlanner(
+        chat_function=fake_chat,
     )
 
-  planner = LLMPlanner(
-    chat_function=fake_chat,
-  )
-
-  with pytest.raises(
-    PlannerResponseError,
-    match="unsupported fields",
-  ):
-    planner.create_plan("Complete a task.")
+    with pytest.raises(
+        PlannerResponseError,
+        match="unsupported fields",
+    ):
+        planner.create_plan("Complete a task.")
 
 
 def test_planner_rejects_too_many_steps() -> None:
-  def fake_chat(messages, tools):
-    return make_response(
-      """
+    def fake_chat(messages, tools):
+        return make_response("""
       {
         "steps": [
           {"description": "Step one."},
@@ -91,33 +86,30 @@ def test_planner_rejects_too_many_steps() -> None:
           {"description": "Step three."}
         ]
       }
-      """
+      """)
+
+    planner = LLMPlanner(
+        max_plan_steps=2,
+        chat_function=fake_chat,
     )
 
-  planner = LLMPlanner(
-    max_plan_steps=2,
-    chat_function=fake_chat,
-  )
-
-  with pytest.raises(
-    PlannerResponseError,
-    match="limit is 2",
-  ):
-    planner.create_plan("Complete a task.")
+    with pytest.raises(
+        PlannerResponseError,
+        match="limit is 2",
+    ):
+        planner.create_plan("Complete a task.")
 
 
 def test_planner_rejects_invalid_json() -> None:
-  def fake_chat(messages, tools):
-    return make_response(
-      "This is not JSON."
+    def fake_chat(messages, tools):
+        return make_response("This is not JSON.")
+
+    planner = LLMPlanner(
+        chat_function=fake_chat,
     )
 
-  planner = LLMPlanner(
-    chat_function=fake_chat,
-  )
-
-  with pytest.raises(
-    PlannerResponseError,
-    match="invalid JSON",
-  ):
-    planner.create_plan("Complete a task.")
+    with pytest.raises(
+        PlannerResponseError,
+        match="invalid JSON",
+    ):
+        planner.create_plan("Complete a task.")

@@ -3,9 +3,9 @@ from typing import Any
 
 
 def analyze_repository(repo_url: str) -> dict[str, Any]:
-   agent = Agent()
+    agent = Agent()
 
-   task = f"""
+    task = f"""
 Analyze the following GitHub repository:
 
 {repo_url}
@@ -63,10 +63,10 @@ Requirements:
 - If a tool fails, inspect the error and try a reasonable alternative.
 """
 
-   answer = agent.run(task, max_steps=15, repo_url = repo_url)
+    answer = agent.run(task, max_steps=15, repo_url=repo_url)
 
-   return {
-      "answer": answer,
-      "trace": agent.trace.to_dict(),
-      "state": agent.state.to_dict(),
-   }
+    return {
+        "answer": answer,
+        "trace": agent.trace.to_dict(),
+        "state": agent.state.to_dict(),
+    }

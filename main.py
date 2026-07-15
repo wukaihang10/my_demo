@@ -12,27 +12,17 @@ def main():
     repository_url = "https://github.com/wukaihang10/my_demo"
 
     if not repository_url:
-        print(
-            "Repository URL cannot be empty."
-        )
+        print("Repository URL cannot be empty.")
         return
 
-    result = analyze_repository(
-        repository_url
-    )
+    result = analyze_repository(repository_url)
 
     print("\n===== Final Answer =====\n")
     print(result["answer"])
 
-
     print("\n===== Repository State =====\n")
 
-    print(json.dumps(
-        result["state"],
-        ensure_ascii = False,
-        indent = 2
-    ))
-
+    print(json.dumps(result["state"], ensure_ascii=False, indent=2))
 
     print("\n===== Agent Trace =====\n")
     print(

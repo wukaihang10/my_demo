@@ -2,395 +2,406 @@ from dataclasses import asdict, dataclass, field
 from typing import Any, Iterable, Literal
 
 PlanStepStatus = Literal[
-  "pending",
-  "in_progress",
-  "completed",
-  "failed",
-  "skipped",
+    "pending",
+    "in_progress",
+    "completed",
+    "failed",
+    "skipped",
 ]
 
 AgentPlanStatus = Literal[
-  "pending",
-  "in_progress",
-  "completed",
-  "failed",
+    "pending",
+    "in_progress",
+    "completed",
+    "failed",
 ]
 
+
 class PlanError(ValueError):
-  """Base exception for plan-related errors."""
+    """Base exception for plan-related errors."""
 
 
 class PlanValidationError(PlanError):
-  """Raised when a plan has an invalid structure."""
+    """Raised when a plan has an invalid structure."""
 
 
 class PlanTransitionError(PlanError):
-  """Raised when an invalid plan state transition is attempted."""
+    """Raised when an invalid plan state transition is attempted."""
 
 
-@dataclass(frozen = True)
+@dataclass(frozen=True)
 class PlanStepSpec:
-  """
-  Declarative description of a plan step.
-  This structure may be created from LLM output. It deliberately does not contain runtime-controlled fields such as id, status, result or error.
-  """
+    """
+    Declarative description of a plan step.
+    This structure may be created from LLM output. It deliberately does not contain runtime-controlled fields such as id, status, result or error.
+    """
 
-  description: str
-  completion_criteria: str | None =None
+    description: str
+    completion_criteria: str | None = None
 
-  def __post_init__(self) -> None:
-    description = self.description.strip()
+    def __post_init__(self) -> None:
+        description = self.description.strip()
 
-    if not description:
-      raise PlanValidationError("Plan step description must not be empty.")
-    
-    object.__setattr__(self, "description", description)
+        if not description:
+            raise PlanValidationError("Plan step description must not be empty.")
 
-    if self.completion_criteria is not None:
-      completion_criteria = self.completion_criteria.strip()
+        object.__setattr__(self, "description", description)
 
-      object.__setattr__(self, "completion_criteria", completion_criteria or None,)
+        if self.completion_criteria is not None:
+            completion_criteria = self.completion_criteria.strip()
+
+            object.__setattr__(
+                self,
+                "completion_criteria",
+                completion_criteria or None,
+            )
 
 
 @dataclass
 class PlanStep:
-  """
-  Runtime state of one plan step.
-  The program owns id and status transitions. The LLM should never directly construct or mutate the object.
-  """
+    """
+    Runtime state of one plan step.
+    The program owns id and status transitions. The LLM should never directly construct or mutate the object.
+    """
 
-  id: int
-  description: str
-  completion_criteria: str | None = None
+    id: int
+    description: str
+    completion_criteria: str | None = None
 
-  status: PlanStepStatus = "pending"
-  result: str | None = None
-  error: str | None = None
+    status: PlanStepStatus = "pending"
+    result: str | None = None
+    error: str | None = None
 
-  def __post_init__(self) -> None:
-    if self.id <= 0:
-      raise PlanValidationError("Plan step id must be greater than zero.")
-    
-    self.description = self.description.strip()
+    def __post_init__(self) -> None:
+        if self.id <= 0:
+            raise PlanValidationError("Plan step id must be greater than zero.")
 
-    if not self.description:
-      raise PlanValidationError(f"Plan step {self.id} description must not be empty.")
-    
-    if self.completion_criteria is not None:
-      self.completion_criteria = self.completion_criteria.strip() or None
+        self.description = self.description.strip()
 
-  def start(self) -> None:
-    if self.status == "in_progress":
-      return
-    
-    if self.status != "pending":
-      raise PlanTransitionError(f"Cannot start plan step {self.id} from status '{self.status}'.")
-    
-    self.status = "in_progress"
+        if not self.description:
+            raise PlanValidationError(
+                f"Plan step {self.id} description must not be empty."
+            )
 
-  
-  def complete(self, result: str | None = None) -> None:
-    if self.status != "in_progress":
-      raise PlanTransitionError(f"Cannot complete plan step {self.id} from status '{self.status}'.")
-    
-    self.status = "completed"
-    self.result = result
-    self.error = None
+        if self.completion_criteria is not None:
+            self.completion_criteria = self.completion_criteria.strip() or None
 
-  
-  def fail(self, error: str) -> None:
-    if self.status not in ("pending", "in_progress"):
-      raise PlanTransitionError(f"Cannot fail plan step {self.id} from status '{self.status}'")
-    
-    error = error.strip()
-    if not error:
-      raise PlanValidationError("Plan step failure error must not be empty.")
-    
-    self.status = "failed"
-    self.error = error
+    def start(self) -> None:
+        if self.status == "in_progress":
+            return
 
-  
-  def skip(self, reason: str | None = None) -> None:
-    if self.status not in ("pending", "in_progress"):
-      raise PlanTransitionError(f"Cannot skip plan step {self.id} from status '{self.status}'.")
+        if self.status != "pending":
+            raise PlanTransitionError(
+                f"Cannot start plan step {self.id} from status '{self.status}'."
+            )
 
-    self.status = "skipped"
-    self.result = reason
-    self.error = None
+        self.status = "in_progress"
+
+    def complete(self, result: str | None = None) -> None:
+        if self.status != "in_progress":
+            raise PlanTransitionError(
+                f"Cannot complete plan step {self.id} from status '{self.status}'."
+            )
+
+        self.status = "completed"
+        self.result = result
+        self.error = None
+
+    def fail(self, error: str) -> None:
+        if self.status not in ("pending", "in_progress"):
+            raise PlanTransitionError(
+                f"Cannot fail plan step {self.id} from status '{self.status}'"
+            )
+
+        error = error.strip()
+        if not error:
+            raise PlanValidationError("Plan step failure error must not be empty.")
+
+        self.status = "failed"
+        self.error = error
+
+    def skip(self, reason: str | None = None) -> None:
+        if self.status not in ("pending", "in_progress"):
+            raise PlanTransitionError(
+                f"Cannot skip plan step {self.id} from status '{self.status}'."
+            )
+
+        self.status = "skipped"
+        self.result = reason
+        self.error = None
 
 
 @dataclass
 class AgentPlan:
-  goal: str
-  steps: list[PlanStep] = field(default_factory = list)
+    goal: str
+    steps: list[PlanStep] = field(default_factory=list)
 
-  current_step_index: int = 0
-  status: AgentPlanStatus = "pending"
+    current_step_index: int = 0
+    status: AgentPlanStatus = "pending"
 
-  result: str | None = None
-  error: str | None = None
+    result: str | None = None
+    error: str | None = None
 
-  def __post_init__(self) -> None:
-    self.goal = self.goal.strip()
-    self.validate_structure()
+    def __post_init__(self) -> None:
+        self.goal = self.goal.strip()
+        self.validate_structure()
 
+    @classmethod
+    def from_step_specs(
+        cls,
+        *,
+        goal: str,
+        step_specs: Iterable[PlanStepSpec],
+        max_steps: int | None = None,
+    ) -> "AgentPlan":
+        """
+        Build a runtime plan from declarative step specifications.
+        Step IDs are generated by the program rather than accepted planner or LLM
+        """
 
-  @classmethod
-  def from_step_specs(
-    cls,
-    *,
-    goal: str,
-    step_specs: Iterable[PlanStepSpec],
-    max_steps: int | None = None,
-  ) -> "AgentPlan":
-    """
-    Build a runtime plan from declarative step specifications.
-    Step IDs are generated by the program rather than accepted planner or LLM
-    """
+        steps = [
+            PlanStep(
+                id=index,
+                description=spec.description,
+                completion_criteria=spec.completion_criteria,
+            )
+            for index, spec in enumerate(step_specs, start=1)
+        ]
 
-    steps = [
-      PlanStep(
-        id = index,
-        description = spec.description,
-        completion_criteria = spec.completion_criteria,
-      )
-      for index, spec in enumerate(step_specs, start = 1)
-    ]
+        plan = cls(
+            goal=goal,
+            steps=steps,
+        )
 
-    plan = cls(
-      goal = goal,
-      steps = steps,
-    )
+        plan.validate_structure(max_steps=max_steps)
 
-    plan.validate_structure(max_steps = max_steps)
+        return plan
 
-    return plan
-  
+    @property
+    def current_step(self) -> PlanStep | None:
+        if self.current_step_index >= len(self.steps):
+            return None
 
-  @property
-  def current_step(self) -> PlanStep | None:
-    if self.current_step_index >= len(self.steps):
-      return None
+        return self.steps[self.current_step_index]
 
-    return self.steps[self.current_step_index]
-  
+    def validate_structure(
+        self,
+        *,
+        max_steps: int | None = None,
+    ) -> None:
+        if not self.goal:
+            raise PlanValidationError("Plan goal must not be empty.")
 
-  def validate_structure(
-      self,
-      *,
-      max_steps: int | None = None,
-  ) -> None:
-    if not self.goal:
-      raise PlanValidationError("Plan goal must not be empty.")
-    
-    if not self.steps:
-      raise PlanValidationError("Plan must contain at least one step.")
-    
-    if max_steps is not None:
-      if max_steps <= 0:
-        raise PlanValidationError("max_steps must be greater than zero.")
+        if not self.steps:
+            raise PlanValidationError("Plan must contain at least one step.")
 
-      if len(self.steps) > max_steps:
-        raise PlanValidationError(f"Plan contains {len(self.steps)} steps, but the limit is {max_steps}.")
+        if max_steps is not None:
+            if max_steps <= 0:
+                raise PlanValidationError("max_steps must be greater than zero.")
 
-    step_ids = [step.id for step in self.steps]
+            if len(self.steps) > max_steps:
+                raise PlanValidationError(
+                    f"Plan contains {len(self.steps)} steps, but the limit is {max_steps}."
+                )
 
-    if len(step_ids) != len(set(step_ids)):
-      raise PlanValidationError("Plan step IDs must be unique.")
+        step_ids = [step.id for step in self.steps]
 
-    normalized_descriptions = [
-      step.description.strip().casefold()
-      for step in self.steps
-    ]
+        if len(step_ids) != len(set(step_ids)):
+            raise PlanValidationError("Plan step IDs must be unique.")
 
-    if len(normalized_descriptions) != len(
-      set(normalized_descriptions)
-    ):
-      raise PlanValidationError("Plan must not contain duplicate step descriptions.")
+        normalized_descriptions = [
+            step.description.strip().casefold() for step in self.steps
+        ]
 
-    if not 0 <= self.current_step_index <= len(self.steps):
-      raise PlanValidationError("current_step_index is outside the valid range.")
-    
-  def start(self) -> None:
-    if self.status == "in_progress":
-      return
+        if len(normalized_descriptions) != len(set(normalized_descriptions)):
+            raise PlanValidationError(
+                "Plan must not contain duplicate step descriptions."
+            )
 
-    if self.status != "pending":
-      raise PlanTransitionError(f"Cannot start plan from status '{self.status}'.")
+        if not 0 <= self.current_step_index <= len(self.steps):
+            raise PlanValidationError("current_step_index is outside the valid range.")
 
-    self.validate_structure()
+    def start(self) -> None:
+        if self.status == "in_progress":
+            return
 
-    self.status = "in_progress"
-    self.current_step.start()
+        if self.status != "pending":
+            raise PlanTransitionError(f"Cannot start plan from status '{self.status}'.")
 
-  
-  def complete_current_step(
+        self.validate_structure()
+
+        self.status = "in_progress"
+        self.current_step.start()
+
+    def complete_current_step(
         self,
         result: str | None = None,
     ) -> None:
-    self._require_in_progress()
+        self._require_in_progress()
 
-    step = self.current_step
+        step = self.current_step
 
-    if step is None:
-      raise PlanTransitionError("The plan has no current step.")
+        if step is None:
+            raise PlanTransitionError("The plan has no current step.")
 
-    step.complete(result)
-    self._move_to_next_step()
+        step.complete(result)
+        self._move_to_next_step()
 
-
-  def skip_current_step(
+    def skip_current_step(
         self,
         reason: str | None = None,
     ) -> None:
-    self._require_in_progress()
+        self._require_in_progress()
 
-    step = self.current_step
+        step = self.current_step
 
-    if step is None:
-      raise PlanTransitionError("The plan has no current step.")
+        if step is None:
+            raise PlanTransitionError("The plan has no current step.")
 
-    step.skip(reason)
-    self._move_to_next_step()
+        step.skip(reason)
+        self._move_to_next_step()
 
+    def fail_current_step(self, error: str) -> None:
+        self._require_in_progress()
 
-  def fail_current_step(self, error: str) -> None:
-    self._require_in_progress()
+        step = self.current_step
 
-    step = self.current_step
+        if step is None:
+            raise PlanTransitionError("The plan has no current step.")
 
-    if step is None:
-      raise PlanTransitionError("The plan has no current step.")
+        step.fail(error)
 
-    step.fail(error)
+        self.status = "failed"
+        self.error = error
 
-    self.status = "failed"
-    self.error = error
+    def append_step_spacs(
+        self,
+        step_specs: Iterable[PlanStepSpec],
+        *,
+        max_steps: int | None = None,
+    ) -> list[PlanStep]:
+        """
+        Append new pending steps to an in-progress plan.
+        Existing steps and their runtime state are not modified. Step IDs are generated by the program.
+        """
 
+        self._require_in_progress()
 
-  def append_step_spacs(
-      self,
-      step_specs: Iterable[PlanStepSpec],
-      *,
-      max_steps: int | None = None,
-  ) -> list[PlanStep]:
-    """
-    Append new pending steps to an in-progress plan.
-    Existing steps and their runtime state are not modified. Step IDs are generated by the program.
-    """
+        specs = list(step_specs)
 
-    self._require_in_progress()
+        if not specs:
+            raise PlanValidationError(
+                "At least one step must be provided when extending a plan."
+            )
 
-    specs = list(step_specs)
+        if max_steps is not None:
+            if max_steps <= 0:
+                raise PlanValidationError("max_steps must be greater than zero.")
 
-    if not specs:
-      raise PlanValidationError("At least one step must be provided when extending a plan.")
-    
-    if max_steps is not None:
-      if max_steps <= 0:
-        raise PlanValidationError("max_steps must be greater than zero.")
-      
-      new_total = len(self.steps) + len(specs)
+            new_total = len(self.steps) + len(specs)
 
-      if new_total > max_steps:
-        raise PlanValidationError(f"Extending the plan would create {new_total} steps, but the limit is {max_steps}.")
-      
-    existing_descriptions = {
-      step.description.strip().casefold()
-      for step in self.steps
-    }
+            if new_total > max_steps:
+                raise PlanValidationError(
+                    f"Extending the plan would create {new_total} steps, but the limit is {max_steps}."
+                )
 
-    new_description: set[str] = set()
+        existing_descriptions = {
+            step.description.strip().casefold() for step in self.steps
+        }
 
-    for spec in specs:
-      normalized_description = spec.description.strip().casefold()
+        new_description: set[str] = set()
 
-      if normalized_description in existing_descriptions:
-        raise PlanValidationError(
-          f"A new plan duplicates an existing step: '{spec.description}'."
-        )
-      
-      if normalized_description in new_description:
-        raise PlanValidationError(f"The appended steps contain duplicate descriptions: '{spec.description}'.")
-      
-      new_description.add(normalized_description)
+        for spec in specs:
+            normalized_description = spec.description.strip().casefold()
 
-    next_step_id = max(step.id for step in self.steps) + 1
+            if normalized_description in existing_descriptions:
+                raise PlanValidationError(
+                    f"A new plan duplicates an existing step: '{spec.description}'."
+                )
 
-    new_steps = [
-      PlanStep(
-        id = next_step_id + offset,
-        description = spec.description,
-        completion_criteria = spec.completion_criteria,
-      )
-      for offset, spec in enumerate(specs)
-    ]
+            if normalized_description in new_description:
+                raise PlanValidationError(
+                    f"The appended steps contain duplicate descriptions: '{spec.description}'."
+                )
 
-    self.steps.extend(new_steps)
-    self.validate_structure(max_steps = max_steps)
-    return new_steps
+            new_description.add(normalized_description)
 
-  def finish(self, result: str | None = None) -> None:
-    """
-    Close the plan after the Agent has produced its final answer.
+        next_step_id = max(step.id for step in self.steps) + 1
 
-    During the current transitional stage, unfinished steps are marked as skipped. Later, controlled plan-progress updates should normally complete or skip steps before this method is called.
-    """
+        new_steps = [
+            PlanStep(
+                id=next_step_id + offset,
+                description=spec.description,
+                completion_criteria=spec.completion_criteria,
+            )
+            for offset, spec in enumerate(specs)
+        ]
 
-    if self.status == "completed":
-      return
+        self.steps.extend(new_steps)
+        self.validate_structure(max_steps=max_steps)
+        return new_steps
 
-    if self.status == "failed":
-      raise PlanTransitionError("Cannot finish a failed plan.")
+    def finish(self, result: str | None = None) -> None:
+        """
+        Close the plan after the Agent has produced its final answer.
 
-    for step in self.steps:
-      if step.status in ("pending", "in_progress"):
-        step.skip("Agent finished before this step was explicitly updated.")
+        During the current transitional stage, unfinished steps are marked as skipped. Later, controlled plan-progress updates should normally complete or skip steps before this method is called.
+        """
 
-      self.current_step_index = len(self.steps)
-      self.status = "completed"
-      self.result = result
-      self.error = None
+        if self.status == "completed":
+            return
 
+        if self.status == "failed":
+            raise PlanTransitionError("Cannot finish a failed plan.")
 
-  def fail(self, error: str) -> None:
-    if self.status == "failed":
-      return
+        for step in self.steps:
+            if step.status in ("pending", "in_progress"):
+                step.skip("Agent finished before this step was explicitly updated.")
 
-    if self.status == "completed":
-      raise PlanTransitionError("Cannot fail a completed plan.")
+            self.current_step_index = len(self.steps)
+            self.status = "completed"
+            self.result = result
+            self.error = None
 
-    error = error.strip()
+    def fail(self, error: str) -> None:
+        if self.status == "failed":
+            return
 
-    if not error:
-      raise PlanValidationError("Plan failure error must not be empty.")
+        if self.status == "completed":
+            raise PlanTransitionError("Cannot fail a completed plan.")
 
-    step = self.current_step
+        error = error.strip()
 
-    if step is not None and step.status in ("pending", "in_progress"):
-      step.fail(error)
+        if not error:
+            raise PlanValidationError("Plan failure error must not be empty.")
 
-    self.status = "failed"
-    self.error = error
+        step = self.current_step
 
+        if step is not None and step.status in ("pending", "in_progress"):
+            step.fail(error)
 
-  def _require_in_progress(self) -> None:
-    if self.status != "in_progress":
-      raise PlanTransitionError(f"Plan must be in progress before its current step can be updated; current status is '{self.status}'.")
+        self.status = "failed"
+        self.error = error
 
-  def _move_to_next_step(self) -> None:
-    self.current_step_index += 1
+    def _require_in_progress(self) -> None:
+        if self.status != "in_progress":
+            raise PlanTransitionError(
+                f"Plan must be in progress before its current step can be updated; current status is '{self.status}'."
+            )
 
-    if self.current_step_index >= len(self.steps):
-      self.status = "completed"
-      return
+    def _move_to_next_step(self) -> None:
+        self.current_step_index += 1
 
-    next_step = self.current_step
+        if self.current_step_index >= len(self.steps):
+            self.status = "completed"
+            return
 
-    if next_step is None:
-      raise PlanTransitionError("Failed to locate the next plan step.")
+        next_step = self.current_step
 
-    next_step.start()
+        if next_step is None:
+            raise PlanTransitionError("Failed to locate the next plan step.")
 
-  def to_dict(self) -> dict[str, Any]:
-    return asdict(self)
+        next_step.start()
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
