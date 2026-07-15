@@ -6,19 +6,59 @@ import agent.agent as agent_module
 from agent.agent import Agent
 from llm.client import LLMClientError
 from agent.plan import AgentPlan, PlanStepSpec
+from agent.plan_evaluator import PlanEvaluationError
+from agent.plan_update import (
+    PlanUpdate,
+    PlanUpdatePolicy,
+)
 
 
 class FakePlanner:
-    def create_plan(self, goal: str) -> AgentPlan:
+    def create_plan(
+        self,
+        goal: str,
+    ) -> AgentPlan:
         return AgentPlan.from_step_specs(
             goal=goal,
             step_specs=[
                 PlanStepSpec(
-                    description="Execute the requested task.",
-                    completion_criteria=("Enough evidence exists to answer the user."),
+                    description=("Gather enough evidence to answer " "the user."),
+                    completion_criteria=(
+                        "The required evidence has been " "collected."
+                    ),
                 )
             ],
         )
+
+
+class FakePlanEvaluator:
+    def __init__(
+        self,
+        updates: list[PlanUpdate],
+    ) -> None:
+        self._updates = iter(updates)
+        self.calls: list[dict[str, Any]] = []
+
+    def evaluate_progress(
+        self,
+        **kwargs: Any,
+    ) -> PlanUpdate:
+        self.calls.append(kwargs)
+
+        try:
+            return next(self._updates)
+        except StopIteration as error:
+            raise AssertionError(
+                "The plan evaluator was called more times " "than expected."
+            ) from error
+
+
+class UnexpectedPlanEvaluator:
+    def evaluate_progress(
+        self,
+        **kwargs: Any,
+    ) -> PlanUpdate:
+        raise AssertionError("The plan evaluator should not have been called.")
 
 
 class FakeMessage:
@@ -94,7 +134,10 @@ def test_run_returns_direct_final_answer(
         fake_chat,
     )
 
-    agent = Agent(planner=FakePlanner())
+    agent = Agent(
+        planner=FakePlanner(),
+        plan_evaluator=UnexpectedPlanEvaluator(),
+    )
 
     answer = agent.run(
         user_input="Analyze the repository.",
@@ -115,12 +158,9 @@ def test_run_returns_direct_final_answer(
     assert agent.trace.steps[0].final_response == "Repository analysis completed."
 
     assert agent.state.plan is not None
+
     assert agent.state.plan.status == "completed"
-    assert agent.state.plan.current_step is None
-
-    assert all(step.status == "skipped" for step in agent.state.plan.steps[:-1])
-
-    assert agent.state.plan.result == "Repository analysis completed."
+    assert agent.state.plan.result == ("Repository analysis completed.")
     assert all(step.status == "skipped" for step in agent.state.plan.steps)
 
 
@@ -162,7 +202,18 @@ def test_run_executes_tool_then_returns_answer(
         }
     )
 
-    agent = Agent(planner=FakePlanner())
+    evaluator = FakePlanEvaluator(
+        updates=[
+            PlanUpdate.from_dict(
+                {
+                    "action": "complete_current_step",
+                    "result": ("The required tool evidence was collected."),
+                }
+            )
+        ]
+    )
+
+    agent = Agent(planner=FakePlanner(), plan_evaluator=evaluator)
     agent.tools = {
         "fake_tool": fake_tool,
     }
@@ -201,6 +252,26 @@ def test_run_executes_tool_then_returns_answer(
     assert observation["success"] is True
     assert observation["value"] == "tool result"
 
+    assert len(evaluator.calls) == 1
+
+    evidence = evaluator.calls[0]["latest_evidence"]
+
+    assert len(evidence) == 1
+    assert evidence[0]["tool_name"] == "fake_tool"
+    assert evidence[0]["success"] is True
+    assert evidence[0]["result"]["value"] == ("tool result")
+
+    first_step = agent.trace.steps[0]
+
+    assert first_step.plan_update is not None
+    assert first_step.plan_update["success"] is True
+    assert first_step.plan_update["action"] == ("complete_current_step")
+
+    assert agent.state.plan is not None
+    assert agent.state.plan.status == "completed"
+    assert agent.state.plan.steps[0].status == "completed"
+    assert agent.state.plan.result == ("The tool returned the expected result.")
+
 
 def test_run_stops_when_tool_budget_is_exhausted(
     monkeypatch,
@@ -238,7 +309,7 @@ def test_run_stops_when_tool_budget_is_exhausted(
         }
     )
 
-    agent = Agent(planner=FakePlanner())
+    agent = Agent(planner=FakePlanner(), plan_evaluator=UnexpectedPlanEvaluator())
     agent.tools = {
         "fake_tool": fake_tool,
     }
@@ -285,7 +356,7 @@ def test_run_records_llm_error(
         fake_chat,
     )
 
-    agent = Agent(planner=FakePlanner())
+    agent = Agent(planner=FakePlanner(), plan_evaluator=UnexpectedPlanEvaluator())
 
     answer = agent.run(
         user_input="Analyze repository.",
@@ -349,3 +420,221 @@ def test_run_rejects_invalid_tool_budget() -> None:
     assert agent.state.phase == "failed"
 
     assert agent.state.plan is None
+
+
+def test_run_evaluates_plan_once_per_tool_batch(
+    monkeypatch,
+) -> None:
+    first_call = make_tool_call(
+        name="fake_tool",
+        arguments={"value": 1},
+        call_id="call_1",
+    )
+    second_call = make_tool_call(
+        name="fake_tool",
+        arguments={"value": 2},
+        call_id="call_2",
+    )
+
+    responses = iter(
+        [
+            FakeMessage(
+                tool_calls=[
+                    first_call,
+                    second_call,
+                ]
+            ),
+            FakeMessage(content="Both results were collected."),
+        ]
+    )
+
+    def fake_chat(messages, tools):
+        return next(responses)
+
+    monkeypatch.setattr(
+        agent_module,
+        "chat",
+        fake_chat,
+    )
+
+    evaluator = FakePlanEvaluator(
+        updates=[
+            PlanUpdate.from_dict(
+                {
+                    "action": "complete_current_step",
+                    "result": ("Both tool calls completed."),
+                }
+            )
+        ]
+    )
+
+    fake_tool = FakeTool(
+        result={
+            "success": True,
+            "value": "ok",
+        }
+    )
+
+    agent = Agent(
+        planner=FakePlanner(),
+        plan_evaluator=evaluator,
+    )
+    agent.tools = {
+        "fake_tool": fake_tool,
+    }
+
+    answer = agent.run(
+        user_input="Call the tool twice.",
+        max_steps=3,
+        max_tool_calls=3,
+    )
+
+    assert answer == "Both results were collected."
+    assert fake_tool.calls == [
+        {"value": 1},
+        {"value": 2},
+    ]
+
+    assert len(evaluator.calls) == 1
+
+    evidence = evaluator.calls[0]["latest_evidence"]
+
+    assert len(evidence) == 2
+    assert evidence[0]["tool_call_id"] == "call_1"
+    assert evidence[1]["tool_call_id"] == "call_2"
+
+    assert agent.trace.steps[0].plan_update is not None
+    assert agent.trace.steps[0].plan_update["action"] == "complete_current_step"
+
+
+def test_plan_evaluation_error_is_nonfatal(
+    monkeypatch,
+) -> None:
+    tool_call = make_tool_call(
+        name="fake_tool",
+        arguments={"value": 42},
+    )
+
+    responses = iter(
+        [
+            FakeMessage(tool_calls=[tool_call]),
+            FakeMessage(content="The task still completed."),
+        ]
+    )
+
+    def fake_chat(messages, tools):
+        return next(responses)
+
+    monkeypatch.setattr(
+        agent_module,
+        "chat",
+        fake_chat,
+    )
+
+    class ErrorEvaluator:
+        def evaluate_progress(
+            self,
+            **kwargs: Any,
+        ) -> PlanUpdate:
+            raise PlanEvaluationError("simulated invalid evaluator response")
+
+    fake_tool = FakeTool(
+        result={
+            "success": True,
+            "value": "ok",
+        }
+    )
+
+    agent = Agent(
+        planner=FakePlanner(),
+        plan_evaluator=ErrorEvaluator(),
+    )
+    agent.tools = {
+        "fake_tool": fake_tool,
+    }
+
+    answer = agent.run(
+        user_input="Use the tool.",
+        max_steps=3,
+        max_tool_calls=3,
+    )
+
+    assert answer == "The task still completed."
+    assert agent.state.phase == "completed"
+    assert agent.trace.status == "completed"
+
+    assert any(
+        "Plan progress evaluation failed" in error for error in agent.state.errors
+    )
+
+    update_trace = agent.trace.steps[0].plan_update
+
+    assert update_trace is not None
+    assert update_trace["success"] is False
+    assert "simulated invalid evaluator response" in update_trace["error"]
+
+
+def test_failed_plan_stops_agent_after_tool_batch(
+    monkeypatch,
+) -> None:
+    tool_call = make_tool_call(
+        name="fake_tool",
+        arguments={"value": 42},
+    )
+
+    executor_call_count = 0
+
+    def fake_chat(messages, tools):
+        nonlocal executor_call_count
+        executor_call_count += 1
+
+        return FakeMessage(tool_calls=[tool_call])
+
+    monkeypatch.setattr(
+        agent_module,
+        "chat",
+        fake_chat,
+    )
+
+    evaluator = FakePlanEvaluator(
+        updates=[
+            PlanUpdate.from_dict(
+                {
+                    "action": "fail_current_step",
+                    "error": ("The required information is " "unavailable."),
+                }
+            )
+        ]
+    )
+
+    fake_tool = FakeTool(
+        result={
+            "success": False,
+            "error": "Repository is unavailable.",
+        }
+    )
+
+    agent = Agent(
+        planner=FakePlanner(),
+        plan_evaluator=evaluator,
+    )
+    agent.tools = {
+        "fake_tool": fake_tool,
+    }
+
+    answer = agent.run(
+        user_input="Inspect the unavailable repository.",
+        max_steps=3,
+        max_tool_calls=3,
+    )
+
+    assert "task plan failed" in answer.lower()
+    assert "required information is unavailable" in answer.lower()
+
+    assert executor_call_count == 1
+    assert agent.state.phase == "failed"
+    assert agent.trace.status == "plan_failed"
+
+    assert agent.state.plan is not None
+    assert agent.state.plan.status == "failed"
+    assert agent.state.plan.current_step.status == "failed"

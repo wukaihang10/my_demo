@@ -9,6 +9,7 @@ from agent.plan import (
 )
 
 PlanUpdateAction = Literal[
+    "keep_current_step",
     "complete_current_step",
     "skip_current_step",
     "fail_current_step",
@@ -16,6 +17,7 @@ PlanUpdateAction = Literal[
 ]
 
 VALID_PLAN_UPDATE_ACTIONS = {
+    "keep_current_step",
     "complete_current_step",
     "skip_current_step",
     "fail_current_step",
@@ -75,6 +77,19 @@ class PlanUpdate:
             )
 
         typed_action = cast(PlanUpdateAction, action)
+
+        if typed_action == "keep_current_step":
+            cls._reject_unknown_fields(
+                payload,
+                allowed_fields={"action", "reason"},
+            )
+            return cls(
+                action=typed_action,
+                reason=cls._optional_text(
+                    payload.get("reason"),
+                    field_name="reason",
+                ),
+            )
 
         if typed_action == "complete_current_step":
             cls._reject_unknown_fields(
@@ -285,13 +300,22 @@ class PlanController:
         plan: AgentPlan,
         update: PlanUpdate,
     ) -> dict[str, Any]:
-        if self.updates_used >= self.policy.max_updates:
+        plan_changed = update.action != "keep_current_step"
+
+        if plan_changed and self.updates_used >= self.policy.max_updates:
             raise PlanUpdateBudgetError("The plan update budget has been exhausted.")
 
         added_step_ids: list[int] = []
 
         try:
-            if update.action == "complete_current_step":
+            if update.action == "keep_current_step":
+                if plan.status != "in_progress" or plan.current_step is None:
+                    raise PlanUpdateApplicationError(
+                        "The current step can only be kept while "
+                        "the plan is in progress."
+                    )
+
+            elif update.action == "complete_current_step":
                 plan.complete_current_step(
                     result=update.result,
                 )
@@ -319,14 +343,17 @@ class PlanController:
 
                 if len(update.new_steps) > self.policy.max_added_steps_per_update:
                     raise PlanUpdateBudgetError(
-                        f"A single update may add at most {self.policy.max_added_steps_per_update} steps."
+                        "A single update may add at most "
+                        f"{self.policy.max_added_steps_per_update} "
+                        "steps."
                     )
 
                 new_total = len(plan.steps) + len(update.new_steps)
 
                 if new_total > self.policy.max_total_steps:
                     raise PlanUpdateBudgetError(
-                        f"The plan may contain at most {self.policy.max_total_steps} steps."
+                        "The plan may contain at most "
+                        f"{self.policy.max_total_steps} steps."
                     )
 
                 added_steps = plan.append_step_specs(
@@ -338,24 +365,28 @@ class PlanController:
 
             else:
                 raise PlanUpdateValidationError(
-                    f"Unsupported plan update action: '{update.action}'."
+                    "Unsupported plan update action: " f"'{update.action}'."
                 )
+
         except PlanUpdateError:
             raise
+
         except PlanError as error:
             raise PlanUpdateApplicationError(
                 f"Plan update could not be applied: {error}"
             ) from error
 
-        self.updates_used += 1
+        if plan_changed:
+            self.updates_used += 1
 
         current_step = plan.current_step
 
         return {
             "success": True,
             "action": update.action,
+            "plan_changed": plan_changed,
             "plan_status": plan.status,
-            "current_step_id": current_step.id if current_step is not None else None,
+            "current_step_id": (current_step.id if current_step is not None else None),
             "added_step_ids": added_step_ids,
             "updates_used": self.updates_used,
             "updates_remaining": self.updates_remaining,

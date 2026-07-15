@@ -117,8 +117,24 @@ def build_state_context(state: RepositoryState) -> str:
 
     sections.append(f"Repository analysis state:\n{repository_section}")
 
+    plan = state.plan
+
+    if plan is not None and plan.status == "completed":
+        next_action_instruction = (
+            "The task plan is complete. Produce the final "
+            "answer using the gathered evidence. Do not call "
+            "additional tools unless they are strictly necessary."
+        )
+    else:
+        next_action_instruction = (
+            "Use this state to choose the next action. "
+            "Do not repeat completed work unless it is "
+            "necessary. Focus on the current plan step."
+        )
+
     return (
         "Current agent state:\n\n"
         + "\n\n".join(sections)
-        + "\n\nUse this state to choose the next action. Do not repeat completed work unless it is necessary. Focus on the current plan step."
+        + "\n\n"
+        + next_action_instruction
     )

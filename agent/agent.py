@@ -13,6 +13,8 @@ from agent.history import ToolHistory
 
 # from agent.plan import build_repository_analysis_plan
 from agent.planner import LLMPlanner, PlannerError
+from agent.plan_evaluator import LLMPlanProgressEvaluator, PlanEvaluationError
+from agent.plan_update import PlanController, PlanUpdateError, PlanUpdatePolicy
 
 TOOL_SCHEMAS = [tool.schema() for tool in TOOLS]
 
@@ -38,12 +40,20 @@ Rules:
 
 
 class Agent:
-    def __init__(self, planner: LLMPlanner | None = None):
+    def __init__(
+        self,
+        planner: LLMPlanner | None = None,
+        plan_evaluator: LLMPlanProgressEvaluator | None = None,
+        plan_update_policy: PlanUpdatePolicy | None = None,
+    ):
         self.tools = TOOL_MAP
         self.trace = AgentTrace()
         self.state = RepositoryState()
         self.tool_history = ToolHistory()
         self.planner = planner or LLMPlanner()
+        self.plan_evaluator = plan_evaluator or LLMPlanProgressEvaluator()
+        self.plan_update_policy = plan_update_policy or PlanUpdatePolicy()
+        self.plan_controller = PlanController(policy=self.plan_update_policy)
 
     def _preview(self, value, max_chars: int = 500) -> str:
         try:
@@ -152,6 +162,43 @@ class Agent:
 
         return normalized_result, trace
 
+    def _evaluate_plan_progress(
+        self,
+        latest_evidence: list[dict[str, Any]],
+    ) -> dict[str, Any] | None:
+        plan = self.state.plan
+
+        if plan is None:
+            return None
+
+        if plan.status != "in_progress":
+            return None
+
+        if not latest_evidence:
+            return None
+
+        try:
+            update = self.plan_evaluator.evaluate_progress(
+                plan=plan,
+                state=self.state,
+                latest_evidence=latest_evidence,
+                updates_remaining=self.plan_controller.updates_remaining,
+                max_total_steps=self.plan_controller.policy.max_total_steps,
+                max_added_steps_per_update=self.plan_controller.policy.max_added_steps_per_update,
+            )
+
+            return self.plan_controller.apply_update(
+                plan,
+                update,
+            )
+
+        except (PlanEvaluationError, PlanUpdateError) as error:
+            error_message = f"Plan progress evaluation failed: {error}"
+
+            self.state.add_error(error_message)
+
+            return {"success": False, "error": error_message}
+
     def run(
         self,
         user_input: str,
@@ -167,6 +214,10 @@ class Agent:
         self.state = RepositoryState(repo_url=repo_url)
 
         self.tool_history = ToolHistory()
+
+        self.plan_controller = PlanController(
+            policy=self.plan_update_policy,
+        )
 
         if max_steps <= 0:
             error_message = "max_steps must be greater than zero."
@@ -195,6 +246,13 @@ class Agent:
 
         try:
             plan = self.planner.create_plan(user_input)
+
+            if len(plan.steps) > self.plan_update_policy.max_total_steps:
+                # 默认配置下这个条件不会触发，Planner最多6步，PlanUpdatePolicy最多10步
+                raise PlannerError(
+                    f"The initial plan contains {len(plan.steps)} steps, but the runtime plan limit is {self.plan_update_policy.max_total_steps}"
+                )
+
             plan.start()
         except PlannerError as error:
             error_message = f"Agent planning failed: {error}"
@@ -255,6 +313,8 @@ class Agent:
             # 下面是工具调用循环
             messages.append(response.model_dump(exclude_none=True))
 
+            latest_evidence: list[dict[str, Any]] = []
+
             for tool_call in response.tool_calls:
                 # 检查工具调用次数是否超了
 
@@ -286,11 +346,40 @@ class Agent:
                     f"{tool_trace.duration_ms:.2f} ms"
                 )
 
+                latest_evidence.append(
+                    {
+                        "tool_call_id": tool_call.id,
+                        "tool_name": tool_trace.tool_name,
+                        "arguments": tool_trace.arguments,
+                        "success": tool_trace.success,
+                        "result": result,
+                    }
+                )
+
                 content = process_observation(result)
 
                 messages.append(
                     {"role": "tool", "tool_call_id": tool_call.id, "content": content}
                 )
+
+            step_trace.plan_update = self._evaluate_plan_progress(latest_evidence)
+
+            plan = self.state.plan
+
+            if plan is not None and plan.status == "failed":
+                plan_error = (
+                    plan.error or "The task plan failed without an error message."
+                )
+
+                error_message = f"The task plan failed: {plan_error}"
+
+                self.state.add_error(error_message)
+                self.state.phase = "failed"
+
+                self.trace.add_step(step_trace)
+                self.trace.finish("plan_failed")
+
+                return error_message
 
             self.trace.add_step(step_trace)
 

@@ -285,3 +285,44 @@ def test_plan_update_rejects_runtime_fields_in_new_step() -> None:
                 ],
             }
         )
+
+
+def test_parse_keep_current_step_update() -> None:
+    update = PlanUpdate.from_dict(
+        {
+            "action": "keep_current_step",
+            "reason": ("More repository files must be inspected."),
+        }
+    )
+
+    assert update.action == "keep_current_step"
+    assert update.reason == ("More repository files must be inspected.")
+
+
+def test_controller_keeps_current_step_without_using_budget() -> None:
+    plan = make_running_plan()
+    controller = PlanController()
+
+    update = PlanUpdate.from_dict(
+        {
+            "action": "keep_current_step",
+            "reason": ("The available evidence is not sufficient."),
+        }
+    )
+
+    result = controller.apply_update(
+        plan,
+        update,
+    )
+
+    assert result["success"] is True
+    assert result["action"] == "keep_current_step"
+    assert result["plan_changed"] is False
+
+    assert plan.status == "in_progress"
+    assert plan.current_step_index == 0
+    assert plan.current_step is not None
+    assert plan.current_step.status == "in_progress"
+
+    assert controller.updates_used == 0
+    assert controller.updates_remaining == controller.policy.max_updates

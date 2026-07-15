@@ -122,3 +122,19 @@ def test_context_works_without_plan() -> None:
     assert "Task plan:" not in context
     assert "Repository analysis state:" in context
     assert "Current phase: initial" in context
+
+
+def test_context_requests_final_answer_when_plan_completed() -> None:
+    plan = make_test_plan("Complete the task.")
+    plan.start()
+
+    while plan.status == "in_progress":
+        plan.complete_current_step("Step completed.")
+
+    state = RepositoryState(plan=plan)
+
+    context = build_state_context(state)
+
+    assert "Plan status: completed" in context
+    assert "Current step: none" in context
+    assert "The task plan is complete. Produce the final " "answer" in context
