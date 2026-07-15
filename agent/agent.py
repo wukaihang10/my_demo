@@ -38,12 +38,12 @@ Rules:
 
 
 class Agent:
-    def __init__(self):
+    def __init__(self, planner: LLMPlanner | None = None):
         self.tools = TOOL_MAP
         self.trace = AgentTrace()
         self.state = RepositoryState()
         self.tool_history = ToolHistory()
-        self.planner = LLMPlanner()
+        self.planner = planner or LLMPlanner()
 
     def _preview(self, value, max_chars: int = 500) -> str:
         try:

@@ -253,3 +253,35 @@ def test_controller_can_fail_current_step() -> None:
     assert plan.status == "failed"
     assert plan.current_step.status == "failed"
     assert plan.error == "Required information is unavailable."
+
+
+def test_plan_update_rejects_empty_failure_error() -> None:
+    with pytest.raises(
+        PlanUpdateValidationError,
+        match="must not be empty",
+    ):
+        PlanUpdate.from_dict(
+            {
+                "action": "fail_current_step",
+                "error": "   ",
+            }
+        )
+
+
+def test_plan_update_rejects_runtime_fields_in_new_step() -> None:
+    with pytest.raises(
+        PlanUpdateValidationError,
+        match="unsupported fields",
+    ):
+        PlanUpdate.from_dict(
+            {
+                "action": "append_steps",
+                "steps": [
+                    {
+                        "id": 100,
+                        "description": "Verify the result.",
+                        "status": "completed",
+                    }
+                ],
+            }
+        )

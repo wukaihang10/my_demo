@@ -1,62 +1,126 @@
-from agent.plan import build_repository_analysis_plan
+import pytest
+
+from agent.plan import (
+    AgentPlan,
+    PlanStepSpec,
+    PlanValidationError,
+)
 
 
-def test_plan_finish_completes_final_step() -> None:
-    plan = build_repository_analysis_plan("Analyze the repository.")
+def make_plan(goal: str = "Complete the task.") -> AgentPlan:
+    return AgentPlan.from_step_specs(
+        goal=goal,
+        step_specs=[
+            PlanStepSpec(
+                description="Collect the required information.",
+                completion_criteria="Enough relevant information has been collected.",
+            ),
+            PlanStepSpec(
+                description="Produce the final answer.",
+                completion_criteria="The final answer addresses the user's goal.",
+            ),
+        ],
+    )
+
+
+def test_plan_finish_skips_unfinished_steps() -> None:
+    plan = make_plan()
+
     plan.start()
-
-    plan.finish("Repository analysis completed.")
+    plan.finish("Task completed.")
 
     assert plan.status == "completed"
     assert plan.current_step is None
     assert plan.current_step_index == len(plan.steps)
-
-    for step in plan.steps[:-1]:
-        assert step.status == "skipped"
-
-    final_step = plan.steps[-1]
-
-    assert final_step.status == "completed"
-    assert final_step.result == ("Repository analysis completed.")
+    assert plan.result == "Task completed."
+    assert all(step.status == "skipped" for step in plan.steps)
 
 
 def test_plan_finish_preserves_completed_steps() -> None:
-    plan = build_repository_analysis_plan("Analyze the repository.")
+    plan = make_plan()
+
     plan.start()
-
-    plan.complete_current_step("Repository is available locally.")
-
-    plan.finish("Repository analysis completed.")
+    plan.complete_current_step("Information collected.")
+    plan.finish("Task completed.")
 
     assert plan.steps[0].status == "completed"
-    assert plan.steps[0].result == ("Repository is available locally.")
-
-    for step in plan.steps[1:-1]:
-        assert step.status == "skipped"
-
-    assert plan.steps[-1].status == "completed"
+    assert plan.steps[0].result == "Information collected."
+    assert plan.steps[1].status == "skipped"
     assert plan.status == "completed"
 
 
 def test_plan_fail_marks_current_step_failed() -> None:
-    plan = build_repository_analysis_plan("Analyze the repository.")
-    plan.start()
+    plan = make_plan()
 
-    plan.fail("The language model request failed.")
+    plan.start()
+    plan.fail("Execution failed.")
 
     assert plan.status == "failed"
     assert plan.current_step is not None
     assert plan.current_step.status == "failed"
-    assert plan.current_step.error == "The language model request failed."
+    assert plan.current_step.error == "Execution failed."
 
 
 def test_plan_fail_is_idempotent() -> None:
-    plan = build_repository_analysis_plan("Analyze the repository.")
-    plan.start()
+    plan = make_plan()
 
+    plan.start()
     plan.fail("First failure.")
     plan.fail("Second failure.")
 
     assert plan.status == "failed"
     assert plan.current_step is not None
     assert plan.current_step.error == "First failure."
+
+
+def test_append_step_specs_generates_runtime_ids() -> None:
+    plan = make_plan()
+
+    plan.start()
+
+    new_steps = plan.append_step_specs(
+        [
+            PlanStepSpec(
+                description="Verify the result.",
+                completion_criteria="The result has been checked.",
+            )
+        ],
+        max_steps=3,
+    )
+
+    assert len(new_steps) == 1
+    assert new_steps[0].id == 3
+    assert new_steps[0].status == "pending"
+    assert plan.steps[-1] is new_steps[0]
+
+
+def test_append_step_specs_respects_max_steps() -> None:
+    plan = make_plan()
+
+    plan.start()
+
+    with pytest.raises(PlanValidationError):
+        plan.append_step_specs(
+            [
+                PlanStepSpec(
+                    description="Verify the result.",
+                )
+            ],
+            max_steps=2,
+        )
+
+
+def test_finish_records_result_for_completed_plan() -> None:
+    plan = make_plan()
+
+    plan.start()
+    plan.complete_current_step("Information collected.")
+    plan.complete_current_step("Answer produced.")
+
+    assert plan.status == "completed"
+    assert plan.result is None
+
+    plan.finish("Final answer.")
+
+    assert plan.status == "completed"
+    assert plan.result == "Final answer."

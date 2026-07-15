@@ -5,6 +5,20 @@ from typing import Any
 import agent.agent as agent_module
 from agent.agent import Agent
 from llm.client import LLMClientError
+from agent.plan import AgentPlan, PlanStepSpec
+
+
+class FakePlanner:
+    def create_plan(self, goal: str) -> AgentPlan:
+        return AgentPlan.from_step_specs(
+            goal=goal,
+            step_specs=[
+                PlanStepSpec(
+                    description="Execute the requested task.",
+                    completion_criteria=("Enough evidence exists to answer the user."),
+                )
+            ],
+        )
 
 
 class FakeMessage:
@@ -80,7 +94,7 @@ def test_run_returns_direct_final_answer(
         fake_chat,
     )
 
-    agent = Agent()
+    agent = Agent(planner=FakePlanner())
 
     answer = agent.run(
         user_input="Analyze the repository.",
@@ -106,10 +120,8 @@ def test_run_returns_direct_final_answer(
 
     assert all(step.status == "skipped" for step in agent.state.plan.steps[:-1])
 
-    final_step = agent.state.plan.steps[-1]
-
-    assert final_step.status == "completed"
-    assert final_step.result == "Repository analysis completed."
+    assert agent.state.plan.result == "Repository analysis completed."
+    assert all(step.status == "skipped" for step in agent.state.plan.steps)
 
 
 def test_run_executes_tool_then_returns_answer(
@@ -150,7 +162,7 @@ def test_run_executes_tool_then_returns_answer(
         }
     )
 
-    agent = Agent()
+    agent = Agent(planner=FakePlanner())
     agent.tools = {
         "fake_tool": fake_tool,
     }
@@ -226,7 +238,7 @@ def test_run_stops_when_tool_budget_is_exhausted(
         }
     )
 
-    agent = Agent()
+    agent = Agent(planner=FakePlanner())
     agent.tools = {
         "fake_tool": fake_tool,
     }
@@ -273,7 +285,7 @@ def test_run_records_llm_error(
         fake_chat,
     )
 
-    agent = Agent()
+    agent = Agent(planner=FakePlanner())
 
     answer = agent.run(
         user_input="Analyze repository.",
@@ -319,10 +331,7 @@ def test_run_rejects_invalid_max_steps() -> None:
     assert agent.trace.status == "invalid_max_steps"
     assert agent.state.phase == "failed"
 
-    assert agent.state.plan is not None
-    assert agent.state.plan.status == "failed"
-    assert agent.state.plan.current_step is not None
-    assert agent.state.plan.current_step.status == "failed"
+    assert agent.state.plan is None
 
 
 def test_run_rejects_invalid_tool_budget() -> None:
@@ -339,5 +348,4 @@ def test_run_rejects_invalid_tool_budget() -> None:
     assert agent.trace.status == "invalid_max_tool_calls"
     assert agent.state.phase == "failed"
 
-    assert agent.state.plan is not None
-    assert agent.state.plan.status == "failed"
+    assert agent.state.plan is None

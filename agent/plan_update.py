@@ -165,14 +165,14 @@ class PlanUpdate:
     ) -> str:
         if not isinstance(value, str):
             raise PlanUpdateValidationError(
-                f"Plan update field '{field_name}' must be a non_empty string."
+                f"Plan update field '{field_name}' must be a non-empty string."
             )
 
         value = value.strip()
 
         if not value:
             raise PlanUpdateValidationError(
-                f"Plan update file '{field_name} must be empty.'"
+                f"Plan update field '{field_name} must not be empty.'"
             )
 
         return value
@@ -203,12 +203,12 @@ class PlanUpdate:
                     f"Appended plan step {index} must be an object."
                 )
 
-            unknow_fields = set(raw_step) - allowed_fields
+            unknown_fields = set(raw_step) - allowed_fields
 
-            if unknow_fields:
+            if unknown_fields:
                 raise PlanUpdateValidationError(
-                    f"Append plan step {index} contains unsupported fiels: "
-                    + ",".join(sorted(unknow_fields))
+                    f"Append plan step {index} contains unsupported fields: "
+                    + ",".join(sorted(unknown_fields))
                 )
 
             description = raw_step.get("description")
@@ -216,7 +216,7 @@ class PlanUpdate:
 
             if not isinstance(description, str):
                 raise PlanUpdateValidationError(
-                    f"Appended plan step {index} feild 'description' must be a string."
+                    f"Appended plan step {index} field 'description' must be a string."
                 )
 
             if completion_criteria is not None and not isinstance(
@@ -329,7 +329,7 @@ class PlanController:
                         f"The plan may contain at most {self.policy.max_total_steps} steps."
                     )
 
-                added_steps = plan.append_step_spacs(
+                added_steps = plan.append_step_specs(
                     update.new_steps,
                     max_steps=self.policy.max_total_steps,
                 )

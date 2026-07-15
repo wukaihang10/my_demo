@@ -274,7 +274,7 @@ class AgentPlan:
         self.status = "failed"
         self.error = error
 
-    def append_step_spacs(
+    def append_step_specs(
         self,
         step_specs: Iterable[PlanStepSpec],
         *,
@@ -349,6 +349,8 @@ class AgentPlan:
         """
 
         if self.status == "completed":
+            if result is not None:
+                self.result = result
             return
 
         if self.status == "failed":

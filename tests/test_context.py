@@ -1,6 +1,24 @@
 from agent.context import build_state_context
-from agent.plan import build_repository_analysis_plan
+from agent.plan import AgentPlan, PlanStepSpec
 from agent.state import RepositoryState
+
+
+def make_test_plan(goal: str) -> AgentPlan:
+    return AgentPlan.from_step_specs(
+        goal=goal,
+        step_specs=[
+            PlanStepSpec(
+                description="Prepare the repository for inspection.",
+                completion_criteria=("A valid local path to the target repository."),
+            ),
+            PlanStepSpec(
+                description=("Collect a high-level overview of the repository."),
+                completion_criteria=(
+                    "The repository structure and important files are known."
+                ),
+            ),
+        ],
+    )
 
 
 def test_context_includes_repository_state() -> None:
@@ -44,7 +62,7 @@ def test_context_includes_repository_state() -> None:
 
 
 def test_context_includes_active_plan() -> None:
-    plan = build_repository_analysis_plan("Analyze the repository architecture.")
+    plan = make_test_plan("Analyze the repository architecture.")
     plan.start()
 
     state = RepositoryState(
@@ -62,7 +80,9 @@ def test_context_includes_active_plan() -> None:
 
     assert "Current step status: in_progress" in context
 
-    assert "Expected evidence: A valid local path to the target repository." in context
+    assert (
+        "Completion criteria: A valid local path to the target repository." in context
+    )
 
     assert "-> [in_progress] 1. Prepare the repository for inspection." in context
 
@@ -70,7 +90,7 @@ def test_context_includes_active_plan() -> None:
 
 
 def test_context_includes_plan_progress() -> None:
-    plan = build_repository_analysis_plan("Analyze the repository architecture.")
+    plan = make_test_plan("Analyze the repository architecture.")
 
     plan.start()
 
