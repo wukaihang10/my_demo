@@ -51,7 +51,7 @@ def _build_plan_section(state: RepositoryState,) -> str | None:
 
     if current_step.completion_criteria:
       lines.append(
-        "Expected evidence: "
+        "Completion criteria: "
         f"{current_step.completion_criteria}"
       )
   
