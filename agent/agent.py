@@ -11,10 +11,10 @@ from agent.state import RepositoryState
 from agent.context import build_state_context
 from agent.history import ToolHistory
 
-# from agent.plan import build_repository_analysis_plan
 from agent.planner import LLMPlanner, PlannerError
 from agent.plan_evaluator import LLMPlanProgressEvaluator, PlanEvaluationError
 from agent.plan_update import PlanController, PlanUpdateError, PlanUpdatePolicy
+from agent.final_answer import FinalAnswerPolicy
 
 TOOL_SCHEMAS = [tool.schema() for tool in TOOLS]
 
@@ -45,15 +45,19 @@ class Agent:
         planner: LLMPlanner | None = None,
         plan_evaluator: LLMPlanProgressEvaluator | None = None,
         plan_update_policy: PlanUpdatePolicy | None = None,
+        final_answer_policy: FinalAnswerPolicy | None = None,
     ):
         self.tools = TOOL_MAP
         self.trace = AgentTrace()
         self.state = RepositoryState()
         self.tool_history = ToolHistory()
+
         self.planner = planner or LLMPlanner()
         self.plan_evaluator = plan_evaluator or LLMPlanProgressEvaluator()
         self.plan_update_policy = plan_update_policy or PlanUpdatePolicy()
         self.plan_controller = PlanController(policy=self.plan_update_policy)
+
+        self.final_answer_policy = final_answer_policy or FinalAnswerPolicy()
 
     def _preview(self, value, max_chars: int = 500) -> str:
         try:
@@ -199,6 +203,31 @@ class Agent:
 
             return {"success": False, "error": error_message}
 
+    def _build_final_answer_rejection_message(
+        self,
+        reason: str,
+    ) -> str:
+        plan = self.state.plan
+        current_step = plan.current_step if plan is not None else None
+
+        lines = [
+            f"The previous response was not accepted as the final answer.\nReason: {reason}"
+        ]
+
+        if current_step:
+            lines.extend(
+                [
+                    f"Continue working on the current plan step {current_step.id}: {current_step.description}",
+                    "Do not repeat the same final answer until the plan has made progress.",
+                ]
+            )
+        else:
+            lines.append(
+                "Continue the task and gather the missing information before answering."
+            )
+
+        return "\n".join(lines)
+
     def run(
         self,
         user_input: str,
@@ -297,18 +326,48 @@ class Agent:
                 return "The language model request failed before the agent could complete the task. Check the repository state and agent trace for details."
 
             if not response.tool_calls:
-                final_response = response.content or ""
-                step_trace.final_response = final_response
+                candidate_response = response.content or ""
+
+                decision = self.final_answer_policy.evaluate(
+                    plan=self.state.plan,
+                    tool_calls_used=self.trace.tool_calls_used,
+                    response_content=candidate_response,
+                )
+
+                step_trace.final_answer_decision = decision.to_dict()
+
+                if decision.allowed:
+                    step_trace.final_response = candidate_response
+
+                    self.trace.add_step(step_trace)
+                    self.trace.finish("completed")
+
+                    self.state.phase = "completed"
+
+                    if self.state.plan is not None:
+                        self.state.plan.finish(result=candidate_response)
+
+                    return candidate_response
+
+                if candidate_response.strip():
+                    messages.append(
+                        {
+                            "role": "assistant",
+                            "content": candidate_response,
+                        }
+                    )
+
+                messages.append(
+                    {
+                        "role": "system",
+                        "content": self._build_final_answer_rejection_message(
+                            decision.reason
+                        ),
+                    }
+                )
 
                 self.trace.add_step(step_trace)
-                self.trace.finish("completed")
-
-                self.state.phase = "completed"
-
-                if self.state.plan is not None:
-                    self.state.plan.finish(result=final_response)
-
-                return final_response
+                continue
 
             # 下面是工具调用循环
             messages.append(response.model_dump(exclude_none=True))

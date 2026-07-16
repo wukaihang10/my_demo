@@ -18,11 +18,12 @@ class ToolTrace:
 class StepTrace:
     step: int
     tool_calls: list[ToolTrace] = field(default_factory=list)
+    plan_update: dict[str, Any] | None = None
+    final_answer_decision: dict[str, Any] | None = None
     final_response: str | None = None
     error: str | None = (
         None  # 与ToolTrace里的error信息不同，上面的error是记录tool调用时出现的错误，step里的error是记录llm调用时出现的错误
     )
-    plan_update: dict[str, Any] | None = None
 
 
 @dataclass

@@ -11,6 +11,7 @@ from agent.plan_update import (
     PlanUpdate,
     PlanUpdatePolicy,
 )
+from agent.final_answer import FinalAnswerPolicy
 
 
 class FakePlanner:
@@ -162,6 +163,12 @@ def test_run_returns_direct_final_answer(
     assert agent.state.plan.status == "completed"
     assert agent.state.plan.result == ("Repository analysis completed.")
     assert all(step.status == "skipped" for step in agent.state.plan.steps)
+
+    step = agent.trace.steps[0]
+
+    assert step.final_answer_decision is not None
+    assert step.final_answer_decision["allowed"] is True
+    assert step.final_response == ("Repository analysis completed.")
 
 
 def test_run_executes_tool_then_returns_answer(
@@ -519,6 +526,7 @@ def test_plan_evaluation_error_is_nonfatal(
         [
             FakeMessage(tool_calls=[tool_call]),
             FakeMessage(content="The task still completed."),
+            FakeMessage(content="The task still completed."),
         ]
     )
 
@@ -559,9 +567,12 @@ def test_plan_evaluation_error_is_nonfatal(
         max_tool_calls=3,
     )
 
-    assert answer == "The task still completed."
-    assert agent.state.phase == "completed"
-    assert agent.trace.status == "completed"
+    assert (
+        answer
+        == "The agent reached the maximum number of steps before producing a final answer."
+    )
+    assert agent.state.phase == "failed"
+    assert agent.trace.status == "max_steps_reached"
 
     assert any(
         "Plan progress evaluation failed" in error for error in agent.state.errors
@@ -638,3 +649,175 @@ def test_failed_plan_stops_agent_after_tool_batch(
     assert agent.state.plan is not None
     assert agent.state.plan.status == "failed"
     assert agent.state.plan.current_step.status == "failed"
+
+
+def test_run_rejects_premature_final_answer_after_tool_use(
+    monkeypatch,
+) -> None:
+    first_tool_call = make_tool_call(
+        name="fake_tool",
+        arguments={"value": 1},
+        call_id="call_1",
+    )
+
+    second_tool_call = make_tool_call(
+        name="fake_tool",
+        arguments={"value": 2},
+        call_id="call_2",
+    )
+
+    responses = iter(
+        [
+            FakeMessage(
+                tool_calls=[first_tool_call],
+            ),
+            FakeMessage(
+                content=(
+                    "This answer is premature because " "the plan is not complete."
+                ),
+            ),
+            FakeMessage(
+                tool_calls=[second_tool_call],
+            ),
+            FakeMessage(
+                content="The final verified answer.",
+            ),
+        ]
+    )
+
+    received_messages: list[list[dict[str, Any]]] = []
+
+    def fake_chat(messages, tools):
+        received_messages.append(messages)
+        return next(responses)
+
+    monkeypatch.setattr(
+        agent_module,
+        "chat",
+        fake_chat,
+    )
+
+    evaluator = FakePlanEvaluator(
+        updates=[
+            PlanUpdate.from_dict(
+                {
+                    "action": "keep_current_step",
+                    "reason": ("More evidence is required."),
+                }
+            ),
+            PlanUpdate.from_dict(
+                {
+                    "action": ("complete_current_step"),
+                    "result": ("All required evidence was " "collected."),
+                }
+            ),
+        ]
+    )
+
+    fake_tool = FakeTool(
+        result={
+            "success": True,
+            "value": "tool result",
+        }
+    )
+
+    agent = Agent(
+        planner=FakePlanner(),
+        plan_evaluator=evaluator,
+    )
+    agent.tools = {
+        "fake_tool": fake_tool,
+    }
+
+    answer = agent.run(
+        user_input="Complete the tool-assisted task.",
+        max_steps=4,
+        max_tool_calls=3,
+    )
+
+    assert answer == "The final verified answer."
+
+    assert fake_tool.calls == [
+        {"value": 1},
+        {"value": 2},
+    ]
+
+    assert len(evaluator.calls) == 2
+    assert len(agent.trace.steps) == 4
+
+    rejected_step = agent.trace.steps[1]
+
+    assert rejected_step.final_answer_decision is not None
+    assert rejected_step.final_answer_decision["allowed"] is False
+    assert rejected_step.final_response is None
+
+    accepted_step = agent.trace.steps[3]
+
+    assert accepted_step.final_answer_decision is not None
+    assert accepted_step.final_answer_decision["allowed"] is True
+    assert accepted_step.final_response == ("The final verified answer.")
+
+    # The third executor request should contain
+    # feedback explaining that the previous answer
+    # was rejected.
+    third_request = received_messages[2]
+
+    rejection_messages = [
+        message
+        for message in third_request
+        if (
+            message.get("role") == "system"
+            and "not accepted as the final answer" in message.get("content", "")
+        )
+    ]
+
+    assert len(rejection_messages) == 1
+
+    assert agent.state.plan is not None
+    assert agent.state.plan.status == "completed"
+    assert agent.state.plan.result == ("The final verified answer.")
+
+
+def test_agent_can_disable_direct_final_answers(
+    monkeypatch,
+) -> None:
+    responses = iter(
+        [
+            FakeMessage(content="An unsupported direct answer."),
+            FakeMessage(content="Another unsupported answer."),
+        ]
+    )
+
+    def fake_chat(messages, tools):
+        return next(responses)
+
+    monkeypatch.setattr(
+        agent_module,
+        "chat",
+        fake_chat,
+    )
+
+    agent = Agent(
+        planner=FakePlanner(),
+        plan_evaluator=UnexpectedPlanEvaluator(),
+        final_answer_policy=FinalAnswerPolicy(
+            allow_direct_answer_before_tool_use=False,
+        ),
+    )
+
+    answer = agent.run(
+        user_input="Analyze an external repository.",
+        max_steps=2,
+        max_tool_calls=3,
+    )
+
+    assert "maximum number of steps" in answer.lower()
+    assert agent.trace.status == "max_steps_reached"
+
+    assert len(agent.trace.steps) == 2
+
+    assert all(
+        step.final_answer_decision is not None
+        and (step.final_answer_decision["allowed"] is False)
+        for step in agent.trace.steps
+    )
