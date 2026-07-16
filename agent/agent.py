@@ -282,6 +282,76 @@ class Agent:
 
         return error_message
 
+    def _build_stagnation_recovery_message(
+        self,
+        *,
+        decision: StagnationDecision,
+        recovery_attempt: str,
+    ) -> str:
+        plan = self.state.plan
+        current_step = plan.current_step if plan is not None else None
+
+        lines = [
+            "The current execution strategy is not making sufficient progress.",
+            f"Detected problem: {decision.message}",
+            f"Recovery attempt: {recovery_attempt}/{self.stagnation_policy.max_recovery_attempts_per_step}",
+            "",
+            "Change the execution strategy materially.",
+            "Do not repeat the same tool with the same arguments unless new evidence justifies it.",
+            "Inspect the existing observations and choose a different tool, different arguments, or a different source of evidence.",
+            "Do not provide a final answer while the plan step remains incomplete.",
+        ]
+
+        if current_step is not None:
+            lines.extend(
+                [
+                    "",
+                    f"Current plan step {current_step.id}: {current_step.description}",
+                ]
+            )
+
+            if current_step.completion_criteria:
+                lines.append(f"Completion criteria: {current_step.completion_criteria}")
+
+        return "\n".join(lines)
+
+    def _apply_stagnation_recovery(
+        self,
+        *,
+        decision: StagnationDecision,
+        step_trace: StepTrace,
+        messages: list[dict[str, Any]],
+    ) -> None:
+        step_id = self._get_current_plan_step_id()
+
+        self.stagnation_tracker.record_recovery(step_id)
+
+        snapshot_after_recovery = self.stagnation_tracker.snapshot()
+
+        recovery_attempt = snapshot_after_recovery.recovery_attempts_on_current_step
+
+        recovery_message = self._build_stagnation_recovery_message(
+            decision=decision,
+            recovery_attempt=recovery_attempt,
+        )
+
+        messages.append(
+            {
+                "role": "system",
+                "content": recovery_message,
+            }
+        )
+
+        if step_trace.stagnation is None:
+            step_trace.stagnation = {}
+
+        step_trace.stagnation["recovery"] = {
+            "applied": True,
+            "attempt": recovery_attempt,
+            "trigger": decision.trigger,
+            "snapshot_after_recovery": snapshot_after_recovery.to_dict(),
+        }
+
     def run(
         self,
         user_input: str,
@@ -435,6 +505,13 @@ class Agent:
                     }
                 )
 
+                if stagnation_decision.should_recover:
+                    self._apply_stagnation_recovery(
+                        decision=stagnation_decision,
+                        step_trace=step_trace,
+                        messages=messages,
+                    )
+
                 self.trace.add_step(step_trace)
                 continue
 
@@ -536,6 +613,13 @@ class Agent:
                 return self._stop_for_stagnation(
                     decision=stagnation_decision,
                     step_trace=step_trace,
+                )
+
+            if stagnation_decision.should_recover:
+                self._apply_stagnation_recovery(
+                    decision=stagnation_decision,
+                    step_trace=step_trace,
+                    messages=messages,
                 )
 
             self.trace.add_step(step_trace)

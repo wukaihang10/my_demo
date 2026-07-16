@@ -557,6 +557,9 @@ def test_plan_evaluation_error_is_nonfatal(
     agent = Agent(
         planner=FakePlanner(),
         plan_evaluator=ErrorEvaluator(),
+        stagnation_policy=StagnationPolicy(
+            max_recovery_attempts_per_step=0,
+        ),
     )
     agent.tools = {
         "fake_tool": fake_tool,
@@ -570,7 +573,7 @@ def test_plan_evaluation_error_is_nonfatal(
 
     assert (
         answer
-        == "Agent execution stagnated: The executor repeatedly proposed a final answer while the task plan was still incomplete."
+        == "Agent execution stagnated: The executor repeatedly proposed a final answer while the task plan was incomplete. The recovery allowance for the current plan step has been exhausted."
     )
     assert agent.state.phase == "failed"
     assert agent.trace.status == "stagnation_rejected_answers"
@@ -804,6 +807,9 @@ def test_agent_can_disable_direct_final_answers(
         final_answer_policy=FinalAnswerPolicy(
             allow_direct_answer_before_tool_use=False,
         ),
+        stagnation_policy=StagnationPolicy(
+            max_recovery_attempts_per_step=0,
+        )
     )
 
     answer = agent.run(
@@ -824,7 +830,7 @@ def test_agent_can_disable_direct_final_answers(
     )
 
 
-def test_agent_stops_after_repeated_keep_updates(
+def test_agent_recovers_once_then_stops_after_more_keeps(
     monkeypatch,
 ) -> None:
     first_tool_call = make_tool_call(
@@ -850,11 +856,10 @@ def test_agent_stops_after_repeated_keep_updates(
         ]
     )
 
-    executor_calls = 0
+    received_messages: list[list[dict[str, Any]]] = []
 
     def fake_chat(messages, tools):
-        nonlocal executor_calls
-        executor_calls += 1
+        received_messages.append(messages)
         return next(responses)
 
     monkeypatch.setattr(
@@ -891,10 +896,12 @@ def test_agent_stops_after_repeated_keep_updates(
         planner=FakePlanner(),
         plan_evaluator=evaluator,
         stagnation_policy=StagnationPolicy(
-            max_consecutive_keeps=2,
+            max_consecutive_keeps=1,
             max_attempts_per_step=10,
+            max_recovery_attempts_per_step=1,
         ),
     )
+
     agent.tools = {
         "fake_tool": fake_tool,
     }
@@ -906,7 +913,6 @@ def test_agent_stops_after_repeated_keep_updates(
     )
 
     assert "execution stagnated" in result.lower()
-    assert executor_calls == 2
 
     assert fake_tool.calls == [
         {"value": 1},
@@ -914,15 +920,31 @@ def test_agent_stops_after_repeated_keep_updates(
     ]
 
     assert agent.trace.status == ("stagnation_consecutive_keeps")
-    assert agent.state.phase == "failed"
 
-    assert agent.state.plan is not None
-    assert agent.state.plan.status == "failed"
+    first_trace = agent.trace.steps[0]
 
-    final_step_trace = agent.trace.steps[-1]
+    assert first_trace.stagnation is not None
+    assert first_trace.stagnation["decision"]["should_recover"] is True
+    assert first_trace.stagnation["recovery"]["applied"] is True
+    assert first_trace.stagnation["recovery"]["attempt"] == 1
 
-    assert final_step_trace.stagnation is not None
-    assert final_step_trace.stagnation["decision"]["should_stop"] is True
+    second_request = received_messages[1]
+
+    recovery_messages = [
+        message
+        for message in second_request
+        if (
+            message.get("role") == "system"
+            and "Change the execution strategy materially" in message.get("content", "")
+        )
+    ]
+
+    assert len(recovery_messages) == 1
+
+    second_trace = agent.trace.steps[1]
+
+    assert second_trace.stagnation is not None
+    assert second_trace.stagnation["decision"]["should_stop"] is True
 
 
 def test_agent_stops_after_repeated_premature_answers(
@@ -969,6 +991,7 @@ def test_agent_stops_after_repeated_premature_answers(
             max_consecutive_rejected_final_answers=2,
             max_consecutive_keeps=10,
             max_attempts_per_step=10,
+            max_recovery_attempts_per_step=0,
         ),
     )
 
@@ -999,3 +1022,123 @@ def test_agent_stops_after_repeated_premature_answers(
 
     assert final_trace.stagnation is not None
     assert final_trace.stagnation["snapshot"]["consecutive_rejected_final_answers"] == 2
+
+
+def test_agent_recovers_from_stagnation_and_completes(
+    monkeypatch,
+) -> None:
+    first_tool_call = make_tool_call(
+        name="fake_tool",
+        arguments={"value": 1},
+        call_id="call_1",
+    )
+
+    second_tool_call = make_tool_call(
+        name="fake_tool",
+        arguments={"value": 2},
+        call_id="call_2",
+    )
+
+    responses = iter(
+        [
+            FakeMessage(
+                tool_calls=[first_tool_call],
+            ),
+            FakeMessage(
+                tool_calls=[second_tool_call],
+            ),
+            FakeMessage(content="The recovered task completed."),
+        ]
+    )
+
+    received_messages: list[list[dict[str, Any]]] = []
+
+    def fake_chat(messages, tools):
+        received_messages.append(messages)
+        return next(responses)
+
+    monkeypatch.setattr(
+        agent_module,
+        "chat",
+        fake_chat,
+    )
+
+    evaluator = FakePlanEvaluator(
+        updates=[
+            PlanUpdate.from_dict(
+                {
+                    "action": "keep_current_step",
+                    "reason": (
+                        "The first strategy did not provide " "enough evidence."
+                    ),
+                }
+            ),
+            PlanUpdate.from_dict(
+                {
+                    "action": "complete_current_step",
+                    "result": (
+                        "The alternative strategy provided " "the required evidence."
+                    ),
+                }
+            ),
+        ]
+    )
+
+    fake_tool = FakeTool(
+        result={
+            "success": True,
+            "value": "evidence",
+        }
+    )
+
+    agent = Agent(
+        planner=FakePlanner(),
+        plan_evaluator=evaluator,
+        stagnation_policy=StagnationPolicy(
+            max_consecutive_keeps=1,
+            max_attempts_per_step=10,
+            max_recovery_attempts_per_step=1,
+        ),
+    )
+
+    agent.tools = {
+        "fake_tool": fake_tool,
+    }
+
+    result = agent.run(
+        user_input="Complete the task.",
+        max_steps=5,
+        max_tool_calls=5,
+    )
+
+    assert result == "The recovered task completed."
+
+    assert fake_tool.calls == [
+        {"value": 1},
+        {"value": 2},
+    ]
+
+    assert agent.state.phase == "completed"
+    assert agent.trace.status == "completed"
+
+    assert agent.state.plan is not None
+    assert agent.state.plan.status == "completed"
+    assert agent.state.plan.result == ("The recovered task completed.")
+
+    first_trace = agent.trace.steps[0]
+
+    assert first_trace.stagnation is not None
+    assert first_trace.stagnation["decision"]["should_recover"] is True
+
+    second_trace = agent.trace.steps[1]
+
+    assert second_trace.plan_update is not None
+    assert second_trace.plan_update["action"] == "complete_current_step"
+
+    second_request = received_messages[1]
+
+    assert any(
+        message.get("role") == "system"
+        and "different tool, different arguments" in message.get("content", "")
+        for message in second_request
+    )
