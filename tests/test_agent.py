@@ -12,6 +12,7 @@ from agent.plan_update import (
     PlanUpdatePolicy,
 )
 from agent.final_answer import FinalAnswerPolicy
+from agent.stagnation import StagnationPolicy
 
 
 class FakePlanner:
@@ -569,10 +570,10 @@ def test_plan_evaluation_error_is_nonfatal(
 
     assert (
         answer
-        == "The agent reached the maximum number of steps before producing a final answer."
+        == "Agent execution stagnated: The executor repeatedly proposed a final answer while the task plan was still incomplete."
     )
     assert agent.state.phase == "failed"
-    assert agent.trace.status == "max_steps_reached"
+    assert agent.trace.status == "stagnation_rejected_answers"
 
     assert any(
         "Plan progress evaluation failed" in error for error in agent.state.errors
@@ -811,8 +812,8 @@ def test_agent_can_disable_direct_final_answers(
         max_tool_calls=3,
     )
 
-    assert "maximum number of steps" in answer.lower()
-    assert agent.trace.status == "max_steps_reached"
+    assert "he executor repeatedly proposed a final answer" in answer.lower()
+    assert agent.trace.status == "stagnation_rejected_answers"
 
     assert len(agent.trace.steps) == 2
 
@@ -821,3 +822,180 @@ def test_agent_can_disable_direct_final_answers(
         and (step.final_answer_decision["allowed"] is False)
         for step in agent.trace.steps
     )
+
+
+def test_agent_stops_after_repeated_keep_updates(
+    monkeypatch,
+) -> None:
+    first_tool_call = make_tool_call(
+        name="fake_tool",
+        arguments={"value": 1},
+        call_id="call_1",
+    )
+
+    second_tool_call = make_tool_call(
+        name="fake_tool",
+        arguments={"value": 2},
+        call_id="call_2",
+    )
+
+    responses = iter(
+        [
+            FakeMessage(
+                tool_calls=[first_tool_call],
+            ),
+            FakeMessage(
+                tool_calls=[second_tool_call],
+            ),
+        ]
+    )
+
+    executor_calls = 0
+
+    def fake_chat(messages, tools):
+        nonlocal executor_calls
+        executor_calls += 1
+        return next(responses)
+
+    monkeypatch.setattr(
+        agent_module,
+        "chat",
+        fake_chat,
+    )
+
+    evaluator = FakePlanEvaluator(
+        updates=[
+            PlanUpdate.from_dict(
+                {
+                    "action": "keep_current_step",
+                    "reason": "More evidence is needed.",
+                }
+            ),
+            PlanUpdate.from_dict(
+                {
+                    "action": "keep_current_step",
+                    "reason": "Still not enough evidence.",
+                }
+            ),
+        ]
+    )
+
+    fake_tool = FakeTool(
+        result={
+            "success": True,
+            "value": "ok",
+        }
+    )
+
+    agent = Agent(
+        planner=FakePlanner(),
+        plan_evaluator=evaluator,
+        stagnation_policy=StagnationPolicy(
+            max_consecutive_keeps=2,
+            max_attempts_per_step=10,
+        ),
+    )
+    agent.tools = {
+        "fake_tool": fake_tool,
+    }
+
+    result = agent.run(
+        user_input="Complete the task.",
+        max_steps=10,
+        max_tool_calls=10,
+    )
+
+    assert "execution stagnated" in result.lower()
+    assert executor_calls == 2
+
+    assert fake_tool.calls == [
+        {"value": 1},
+        {"value": 2},
+    ]
+
+    assert agent.trace.status == ("stagnation_consecutive_keeps")
+    assert agent.state.phase == "failed"
+
+    assert agent.state.plan is not None
+    assert agent.state.plan.status == "failed"
+
+    final_step_trace = agent.trace.steps[-1]
+
+    assert final_step_trace.stagnation is not None
+    assert final_step_trace.stagnation["decision"]["should_stop"] is True
+
+
+def test_agent_stops_after_repeated_premature_answers(
+    monkeypatch,
+) -> None:
+    tool_call = make_tool_call(
+        name="fake_tool",
+        arguments={"value": 1},
+        call_id="call_1",
+    )
+
+    responses = iter(
+        [
+            FakeMessage(tool_calls=[tool_call]),
+            FakeMessage(content="Premature answer one."),
+            FakeMessage(content="Premature answer two."),
+        ]
+    )
+
+    def fake_chat(messages, tools):
+        return next(responses)
+
+    monkeypatch.setattr(
+        agent_module,
+        "chat",
+        fake_chat,
+    )
+
+    evaluator = FakePlanEvaluator(
+        updates=[
+            PlanUpdate.from_dict(
+                {
+                    "action": "keep_current_step",
+                    "reason": "More evidence is required.",
+                }
+            )
+        ]
+    )
+
+    agent = Agent(
+        planner=FakePlanner(),
+        plan_evaluator=evaluator,
+        stagnation_policy=StagnationPolicy(
+            max_consecutive_rejected_final_answers=2,
+            max_consecutive_keeps=10,
+            max_attempts_per_step=10,
+        ),
+    )
+
+    agent.tools = {
+        "fake_tool": FakeTool(
+            result={
+                "success": True,
+                "value": "partial evidence",
+            }
+        )
+    }
+
+    result = agent.run(
+        user_input="Complete the task.",
+        max_steps=10,
+        max_tool_calls=10,
+    )
+
+    assert "execution stagnated" in result.lower()
+    assert agent.trace.status == ("stagnation_rejected_answers")
+
+    assert len(agent.trace.steps) == 3
+
+    final_trace = agent.trace.steps[-1]
+
+    assert final_trace.final_answer_decision is not None
+    assert final_trace.final_answer_decision["allowed"] is False
+
+    assert final_trace.stagnation is not None
+    assert final_trace.stagnation["snapshot"]["consecutive_rejected_final_answers"] == 2

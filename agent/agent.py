@@ -15,6 +15,7 @@ from agent.planner import LLMPlanner, PlannerError
 from agent.plan_evaluator import LLMPlanProgressEvaluator, PlanEvaluationError
 from agent.plan_update import PlanController, PlanUpdateError, PlanUpdatePolicy
 from agent.final_answer import FinalAnswerPolicy
+from agent.stagnation import StagnationDecision, StagnationPolicy, StagnationTracker
 
 TOOL_SCHEMAS = [tool.schema() for tool in TOOLS]
 
@@ -46,6 +47,7 @@ class Agent:
         plan_evaluator: LLMPlanProgressEvaluator | None = None,
         plan_update_policy: PlanUpdatePolicy | None = None,
         final_answer_policy: FinalAnswerPolicy | None = None,
+        stagnation_policy: StagnationPolicy | None = None,
     ):
         self.tools = TOOL_MAP
         self.trace = AgentTrace()
@@ -58,6 +60,9 @@ class Agent:
         self.plan_controller = PlanController(policy=self.plan_update_policy)
 
         self.final_answer_policy = final_answer_policy or FinalAnswerPolicy()
+
+        self.stagnation_policy = stagnation_policy or StagnationPolicy()
+        self.stagnation_tracker = StagnationTracker()
 
     def _preview(self, value, max_chars: int = 500) -> str:
         try:
@@ -228,6 +233,55 @@ class Agent:
 
         return "\n".join(lines)
 
+    def _get_current_plan_step_id(self) -> int | None:
+        plan = self.state.plan
+
+        if plan is None or plan.current_step is None:
+            return None
+
+        return plan.current_step.id
+
+    def _evaluate_stagnation(
+        self,
+        step_trace: StepTrace,
+    ) -> StagnationDecision:
+        snapshot = self.stagnation_tracker.snapshot()
+
+        decision = self.stagnation_policy.evaluate(snapshot)
+
+        step_trace.stagnation = {
+            "snapshot": snapshot.to_dict(),
+            "decision": decision.to_dict(),
+        }
+
+        return decision
+
+    def _stop_for_stagnation(
+        self,
+        *,
+        decision: StagnationDecision,
+        step_trace: StepTrace,
+    ) -> str:
+        message = (
+            decision.message
+            or "Agent executor stopped because no progress was being made."
+        )
+
+        error_message = f"Agent execution stagnated: {message}"
+
+        self.state.add_error(error_message)
+        self.state.phase = "failed"
+
+        plan = self.state.plan
+
+        if plan is not None:
+            plan.fail(error_message)
+
+        self.trace.add_step(step_trace)
+        self.trace.finish(decision.stop_reason or "stagnation_detected")
+
+        return error_message
+
     def run(
         self,
         user_input: str,
@@ -247,6 +301,8 @@ class Agent:
         self.plan_controller = PlanController(
             policy=self.plan_update_policy,
         )
+
+        self.stagnation_tracker = StagnationTracker()
 
         if max_steps <= 0:
             error_message = "max_steps must be greater than zero."
@@ -349,7 +405,20 @@ class Agent:
 
                     return candidate_response
 
+                self.stagnation_tracker.record_final_answer_rejection(
+                    self._get_current_plan_step_id()
+                )
+
+                stagnation_decision = self._evaluate_stagnation(step_trace)
+
+                if stagnation_decision.should_stop:
+                    return self._stop_for_stagnation(
+                        decision=stagnation_decision,
+                        step_trace=step_trace,
+                    )
+
                 if candidate_response.strip():
+
                     messages.append(
                         {
                             "role": "assistant",
@@ -421,7 +490,28 @@ class Agent:
                     {"role": "tool", "tool_call_id": tool_call.id, "content": content}
                 )
 
+            step_id_before_evaluation = self._get_current_plan_step_id()
+
+            self.stagnation_tracker.record_tool_batch(step_id_before_evaluation)
+
             step_trace.plan_update = self._evaluate_plan_progress(latest_evidence)
+
+            plan_update_result = step_trace.plan_update
+
+            if plan_update_result is not None:
+                if plan_update_result.get("success") is False:
+                    self.stagnation_tracker.record_evaluation_error(
+                        self._get_current_plan_step_id()
+                    )
+
+                else:
+                    action = plan_update_result.get("action")
+
+                    if isinstance(action, str):
+                        self.stagnation_tracker.record_plan_update(
+                            action=action,
+                            current_step_id=self._get_current_plan_step_id(),
+                        )
 
             plan = self.state.plan
 
@@ -439,6 +529,14 @@ class Agent:
                 self.trace.finish("plan_failed")
 
                 return error_message
+
+            stagnation_decision = self._evaluate_stagnation(step_trace)
+
+            if stagnation_decision.should_stop:
+                return self._stop_for_stagnation(
+                    decision=stagnation_decision,
+                    step_trace=step_trace,
+                )
 
             self.trace.add_step(step_trace)
 
