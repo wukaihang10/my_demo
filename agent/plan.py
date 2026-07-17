@@ -360,10 +360,10 @@ class AgentPlan:
             if step.status in ("pending", "in_progress"):
                 step.skip("Agent finished before this step was explicitly updated.")
 
-            self.current_step_index = len(self.steps)
-            self.status = "completed"
-            self.result = result
-            self.error = None
+        self.current_step_index = len(self.steps)
+        self.status = "completed"
+        self.result = result
+        self.error = None
 
     def fail(self, error: str) -> None:
         if self.status == "failed":

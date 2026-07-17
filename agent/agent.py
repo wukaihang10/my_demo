@@ -11,11 +11,14 @@ from agent.state import RepositoryState
 from agent.context import build_state_context
 from agent.history import ToolHistory
 
+from agent.plan import PlanError
 from agent.planner import LLMPlanner, PlannerError
 from agent.plan_evaluator import LLMPlanProgressEvaluator, PlanEvaluationError
 from agent.plan_update import PlanController, PlanUpdateError, PlanUpdatePolicy
 from agent.final_answer import FinalAnswerPolicy
 from agent.stagnation import StagnationDecision, StagnationPolicy, StagnationTracker
+from agent.outcome import AgentRunOutcome
+from agent.execution import ToolBatchResult
 
 TOOL_SCHEMAS = [tool.schema() for tool in TOOLS]
 
@@ -63,6 +66,8 @@ class Agent:
 
         self.stagnation_policy = stagnation_policy or StagnationPolicy()
         self.stagnation_tracker = StagnationTracker()
+
+        self.last_outcome: AgentRunOutcome | None = None
 
     def _preview(self, value, max_chars: int = 500) -> str:
         try:
@@ -269,18 +274,11 @@ class Agent:
 
         error_message = f"Agent execution stagnated: {message}"
 
-        self.state.add_error(error_message)
-        self.state.phase = "failed"
-
-        plan = self.state.plan
-
-        if plan is not None:
-            plan.fail(error_message)
-
-        self.trace.add_step(step_trace)
-        self.trace.finish(decision.stop_reason or "stagnation_detected")
-
-        return error_message
+        return self._fail_run(
+            error=error_message,
+            stop_reason=decision.stop_reason or "stagnation_detected",
+            step_trace=step_trace,
+        )
 
     def _build_stagnation_recovery_message(
         self,
@@ -352,19 +350,102 @@ class Agent:
             "snapshot_after_recovery": snapshot_after_recovery.to_dict(),
         }
 
-    def run(
+    def _add_step_trace_once(
         self,
-        user_input: str,
-        max_steps: int = 10,
-        max_tool_calls: int = 30,
-        repo_url: str | None = None,
+        step_trace: StepTrace | None,
+    ) -> None:
+        if step_trace is None:
+            return
+
+        if self.trace.steps and self.trace.steps[-1] is step_trace:
+            return
+
+        self.trace.add_step(step_trace)
+
+    def _finalize_run(
+        self,
+        *,
+        outcome: AgentRunOutcome,
+        step_trace: StepTrace | None = None,
     ) -> str:
+        self._add_step_trace_once(step_trace)
+
+        self.last_outcome = outcome
+
+        plan = self.state.plan
+
+        if outcome.success:
+            self.state.plan = "completed"
+
+            if plan is not None and plan.status == "failed":
+                raise RuntimeError(
+                    "A run cannot complete successfully while its plan is failed."
+                )
+
+            plan.finish(result=outcome.answer)
+
+        else:
+            assert outcome.error is not None
+
+            self.state.phase = "failed"
+            self.state.add_error(outcome.error)
+
+            if step_trace is not None:
+                if step_trace.error is None:
+                    step_trace.error = outcome.error
+
+            if plan is not None and plan.status == "in_progress":
+                plan.fail(outcome.error)
+
+        self.trace.finish(outcome.step_reason)
+
+        return outcome.response
+
+    def _complete_run(
+        self,
+        *,
+        answer: str,
+        step_trace: StepTrace | None = None,
+        stop_reason: str = "completed",
+    ) -> str:
+        outcome = AgentRunOutcome.completed(
+            answer=answer,
+            stop_reason=stop_reason,
+        )
+
+        return self._finalize_run(
+            outcome=outcome,
+            step_trace=step_trace,
+        )
+
+    def _fail_run(
+        self, *, error: str, stop_reason: str, step_trace: StepTrace | None = None
+    ) -> str:
+        outcome = AgentRunOutcome.failed(
+            error=error,
+            stop_reason=stop_reason,
+        )
+
+        return self._finalize_run(
+            outcome=outcome,
+            step_trace=step_trace,
+        )
+
+    def _reset_run_state(
+        self,
+        *,
+        repo_url: str | None,
+        max_steps: int,
+        max_tool_calls: int,
+    ) -> None:
         self.trace = AgentTrace(
             max_steps=max_steps,
             max_tool_calls=max_tool_calls,
         )
 
-        self.state = RepositoryState(repo_url=repo_url)
+        self.state = RepositoryState(
+            repo_url=repo_url,
+        )
 
         self.tool_history = ToolHistory()
 
@@ -373,31 +454,34 @@ class Agent:
         )
 
         self.stagnation_tracker = StagnationTracker()
+        self.last_outcome = None
+
+    def run(
+        self,
+        user_input: str,
+        max_steps: int = 10,
+        max_tool_calls: int = 30,
+        repo_url: str | None = None,
+    ) -> str:
+        self._reset_run_state(
+            repo_url=repo_url, max_steps=max_steps, max_tool_calls=max_tool_calls
+        )
 
         if max_steps <= 0:
             error_message = "max_steps must be greater than zero."
 
-            self.state.add_error(error_message)
-            self.state.phase = "failed"
-
-            if self.state.plan is not None:
-                self.state.plan.fail(error_message)
-
-            self.trace.finish("invalid_max_steps")
-
-            return error_message
+            return self._fail_run(
+                error=error_message,
+                stop_reason="invalid_configuration",
+            )
 
         if max_tool_calls <= 0:
             error_message = "max_tool_calls must be greater than zero."
 
-            self.state.add_error(error_message)
-            self.state.phase = "failed"
-
-            if self.state.plan is not None:
-                self.state.plan.fail(error_message)
-
-            self.trace.finish("invalid_max_tool_calls")
-            return error_message
+            return self._fail_run(
+                error=error_message,
+                stop_reason="invalid_configuration",
+            )
 
         try:
             plan = self.planner.create_plan(user_input)
@@ -409,16 +493,12 @@ class Agent:
                 )
 
             plan.start()
+            self.state.plan = plan
         except PlannerError as error:
-            error_message = f"Agent planning failed: {error}"
-
-            self.state.add_error(error_message)
-            self.state.phase = "failed"
-            self.trace.finish("planning_error")
-
-            return error_message
-
-        self.state.plan = plan
+            return self._fail_run(
+                error=f"Planning failed: {error}",
+                stop_reason="planning_failed",
+            )
 
         messages = [
             {"role": "system", "content": SYSTEM_PROMPT},
@@ -438,18 +518,11 @@ class Agent:
             except LLMClientError as error:
                 error_message = f"LLM request failed at step {step_number}: {error}"
 
-                step_trace.error = error_message
-
-                self.state.add_error(error_message)
-                self.state.phase = "failed"
-
-                if self.state.plan is not None:
-                    self.state.plan.fail(error_message)
-
-                self.trace.add_step(step_trace)
-                self.trace.finish("llm_error")
-
-                return "The language model request failed before the agent could complete the task. Check the repository state and agent trace for details."
+                return self._fail_run(
+                    error=error_message,
+                    stop_reason="llm_error",
+                    step_trace=step_trace,
+                )
 
             if not response.tool_calls:
                 candidate_response = response.content or ""
@@ -465,15 +538,10 @@ class Agent:
                 if decision.allowed:
                     step_trace.final_response = candidate_response
 
-                    self.trace.add_step(step_trace)
-                    self.trace.finish("completed")
-
-                    self.state.phase = "completed"
-
-                    if self.state.plan is not None:
-                        self.state.plan.finish(result=candidate_response)
-
-                    return candidate_response
+                    return self._complete_run(
+                        answer=candidate_response,
+                        step_traaace=step_trace,
+                    )
 
                 self.stagnation_tracker.record_final_answer_rejection(
                     self._get_current_plan_step_id()
@@ -526,16 +594,11 @@ class Agent:
                 if self.trace.tool_calls_used >= max_tool_calls:
                     error_message = "The agent reached the maximum number of allowed tool calls before producing a final answer."
 
-                    self.trace.add_step(step_trace)
-                    self.trace.finish("tool_budget_exceeded")
-
-                    self.state.add_error(error_message)
-                    self.state.phase = "failed"
-
-                    if self.state.plan is not None:
-                        self.state.plan.fail(error_message)
-
-                    return error_message
+                    return self._fail_run(
+                        error=error_message,
+                        stop_reason="tool_budget_exceeded",
+                        step_trace=step_trace,
+                    )
 
                 self.trace.record_tool_call()
 
@@ -599,13 +662,11 @@ class Agent:
 
                 error_message = f"The task plan failed: {plan_error}"
 
-                self.state.add_error(error_message)
-                self.state.phase = "failed"
-
-                self.trace.add_step(step_trace)
-                self.trace.finish("plan_failed")
-
-                return error_message
+                return self._fail_run(
+                    error=error_message,
+                    stop_reason="plan_failed",
+                    step_trace=step_trace,
+                )
 
             stagnation_decision = self._evaluate_stagnation(step_trace)
 
@@ -626,16 +687,10 @@ class Agent:
 
         error_message = "The agent reached the maximum number of steps before producing a final answer."
 
-        # self.trace.add_step(step_trace)
-        self.trace.finish("max_steps_reached")
-
-        self.state.add_error(error_message)
-        self.state.phase = "failed"
-
-        if self.state.plan is not None:
-            self.state.plan.fail(error_message)
-
-        return error_message
+        return self._fail_run(
+            error=error_message,
+            stop_reason="max_steps_reached",
+        )
 
     def execute_tool(self, tool_call) -> tuple[dict, ToolTrace]:
         name = tool_call.function.name

@@ -171,6 +171,12 @@ def test_run_returns_direct_final_answer(
     assert step.final_answer_decision["allowed"] is True
     assert step.final_response == ("Repository analysis completed.")
 
+    assert agent.last_outcome is not None
+    assert agent.last_outcome.success is True
+    assert agent.last_outcome.answer == ("Repository analysis completed.")
+    assert agent.last_outcome.error is None
+    assert agent.last_outcome.stop_reason == "completed"
+
 
 def test_run_executes_tool_then_returns_answer(
     monkeypatch,
@@ -809,7 +815,7 @@ def test_agent_can_disable_direct_final_answers(
         ),
         stagnation_policy=StagnationPolicy(
             max_recovery_attempts_per_step=0,
-        )
+        ),
     )
 
     answer = agent.run(
