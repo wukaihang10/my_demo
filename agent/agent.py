@@ -20,6 +20,7 @@ from agent.final_answer import FinalAnswerPolicy
 from agent.stagnation import StagnationDecision, StagnationPolicy, StagnationTracker
 from agent.outcome import AgentRunOutcome
 from agent.execution import ToolBatchResult
+from agent.config import AgentConfig, PlanningMode
 
 
 class Agent:
@@ -32,6 +33,7 @@ class Agent:
         plan_update_policy: PlanUpdatePolicy | None = None,
         final_answer_policy: FinalAnswerPolicy | None = None,
         stagnation_policy: StagnationPolicy | None = None,
+        config: AgentConfig | None = None,
     ):
         self.task = task or REPOSITORY_TASK
 
@@ -57,6 +59,8 @@ class Agent:
         self.stagnation_tracker = StagnationTracker()
 
         self.last_outcome: AgentRunOutcome | None = None
+
+        self.config = config or AgentConfig()
 
     def _preview(self, value, max_chars: int = 500) -> str:
         try:
@@ -397,6 +401,36 @@ class Agent:
 
         self.last_outcome = None
 
+    def _initialize_plan(
+        self,
+        user_input: str,
+    ) -> None:
+        mode = self.config.planning_mode
+
+        if mode is PlanningMode.NONE:
+            self.state.plan = None
+            return
+
+        plan = self.planner.create_plan(user_input)
+
+        if len(plan.steps) > self.plan_update_policy.max_total_steps:
+            # 默认配置下这个条件不会触发，Planner最多6步，PlanUpdatePolicy最多10步
+            raise PlannerError(
+                f"The initial plan contains {len(plan.steps)} steps, but the runtime plan limit is {self.plan_update_policy.max_total_steps}"
+            )
+
+        plan.start()
+        self.state.plan = plan
+
+    def _uses_dynamic_planning(self) -> bool:
+        return self.config.planning_mode is PlanningMode.DYNAMIC
+
+    def _uses_final_answer_guard(self) -> bool:
+        return self.config.enable_final_answer_guard
+
+    def _uses_stagnation_recovery(self) -> bool:
+        return self.config.enable_stagnation_recovery
+
     def run(
         self,
         user_input: str,
@@ -439,16 +473,7 @@ class Agent:
         self.state.status = "running"
 
         try:
-            plan = self.planner.create_plan(user_input)
-
-            if len(plan.steps) > self.plan_update_policy.max_total_steps:
-                # 默认配置下这个条件不会触发，Planner最多6步，PlanUpdatePolicy最多10步
-                raise PlannerError(
-                    f"The initial plan contains {len(plan.steps)} steps, but the runtime plan limit is {self.plan_update_policy.max_total_steps}"
-                )
-
-            plan.start()
-            self.state.plan = plan
+            self._initialize_plan(user_input)
         except PlannerError as error:
             return self._fail_run(
                 error=f"Planning failed: {error}",
@@ -468,6 +493,7 @@ class Agent:
             state_context = build_state_context(
                 self.state,
                 self.task,
+                self.config.planning_mode,
             )
 
             request_messages = [*messages, {"role": "system", "content": state_context}]
@@ -488,61 +514,67 @@ class Agent:
             if not response.tool_calls:
                 candidate_response = response.content or ""
 
-                decision = self.final_answer_policy.evaluate(
-                    plan=self.state.plan,
-                    tool_calls_used=self.trace.tool_calls_used,
-                    response_content=candidate_response,
-                )
-
-                step_trace.final_answer_decision = decision.to_dict()
-
-                if decision.allowed:
-                    step_trace.final_response = candidate_response
-
-                    return self._complete_run(
-                        answer=candidate_response,
-                        step_trace=step_trace,
+                if self._uses_final_answer_guard():
+                    decision = self.final_answer_policy.evaluate(
+                        plan=self.state.plan,
+                        tool_calls_used=self.trace.tool_calls_used,
+                        response_content=candidate_response,
                     )
 
-                self.stagnation_tracker.record_final_answer_rejection(
-                    self._get_current_plan_step_id()
-                )
+                    step_trace.final_answer_decision = decision.to_dict()
 
-                stagnation_decision = self._evaluate_stagnation(step_trace)
+                    if decision.allowed:
+                        step_trace.final_response = candidate_response
 
-                if stagnation_decision.should_stop:
-                    return self._stop_for_stagnation(
-                        decision=stagnation_decision,
-                        step_trace=step_trace,
-                    )
+                        return self._complete_run(
+                            answer=candidate_response,
+                            step_trace=step_trace,
+                        )
+                    if self._uses_stagnation_recovery():
+                        self.stagnation_tracker.record_final_answer_rejection(
+                            self._get_current_plan_step_id()
+                        )
 
-                if candidate_response.strip():
+                    stagnation_decision = self._evaluate_stagnation(step_trace)
+
+                    if stagnation_decision.should_stop:
+                        return self._stop_for_stagnation(
+                            decision=stagnation_decision,
+                            step_trace=step_trace,
+                        )
+
+                    if candidate_response.strip():
+
+                        messages.append(
+                            {
+                                "role": "assistant",
+                                "content": candidate_response,
+                            }
+                        )
 
                     messages.append(
                         {
-                            "role": "assistant",
-                            "content": candidate_response,
+                            "role": "system",
+                            "content": self._build_final_answer_rejection_message(
+                                decision.reason
+                            ),
                         }
                     )
 
-                messages.append(
-                    {
-                        "role": "system",
-                        "content": self._build_final_answer_rejection_message(
-                            decision.reason
-                        ),
-                    }
+                    if stagnation_decision.should_recover:
+                        self._apply_stagnation_recovery(
+                            decision=stagnation_decision,
+                            step_trace=step_trace,
+                            messages=messages,
+                        )
+
+                    self.trace.add_step(step_trace)
+                    continue
+
+                return self._complete_run(
+                    answer=candidate_response,
+                    step_trace=step_trace,
                 )
-
-                if stagnation_decision.should_recover:
-                    self._apply_stagnation_recovery(
-                        decision=stagnation_decision,
-                        step_trace=step_trace,
-                        messages=messages,
-                    )
-
-                self.trace.add_step(step_trace)
-                continue
 
             # 下面是工具调用循环
             messages.append(response.model_dump(exclude_none=True))
@@ -593,26 +625,28 @@ class Agent:
 
             step_id_before_evaluation = self._get_current_plan_step_id()
 
-            self.stagnation_tracker.record_tool_batch(step_id_before_evaluation)
+            if self._uses_dynamic_planning() and self._uses_stagnation_recovery():
+                self.stagnation_tracker.record_tool_batch(step_id_before_evaluation)
 
-            step_trace.plan_update = self._evaluate_plan_progress(latest_evidence)
+            if self._uses_dynamic_planning():
+                step_trace.plan_update = self._evaluate_plan_progress(latest_evidence)
+                plan_update_result = step_trace.plan_update
 
-            plan_update_result = step_trace.plan_update
+                if self._uses_stagnation_recovery():
+                    if plan_update_result is not None:
+                        if plan_update_result.get("success") is False:
+                            self.stagnation_tracker.record_evaluation_error(
+                                self._get_current_plan_step_id()
+                            )
 
-            if plan_update_result is not None:
-                if plan_update_result.get("success") is False:
-                    self.stagnation_tracker.record_evaluation_error(
-                        self._get_current_plan_step_id()
-                    )
+                        else:
+                            action = plan_update_result.get("action")
 
-                else:
-                    action = plan_update_result.get("action")
-
-                    if isinstance(action, str):
-                        self.stagnation_tracker.record_plan_update(
-                            action=action,
-                            current_step_id=self._get_current_plan_step_id(),
-                        )
+                            if isinstance(action, str):
+                                self.stagnation_tracker.record_plan_update(
+                                    action=action,
+                                    current_step_id=self._get_current_plan_step_id(),
+                                )
 
             plan = self.state.plan
 

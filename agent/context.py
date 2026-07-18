@@ -2,6 +2,7 @@ from typing import Any, TypeVar
 
 from agent.state import AgentState
 from agent.task import TaskProfile
+from agent.config import PlanningMode
 
 TaskStateT = TypeVar("TaskStateT")
 
@@ -22,13 +23,34 @@ def _build_agent_section(
 
 def _build_plan_section(
     state: AgentState[Any],
+    planning_mode: PlanningMode,
 ) -> str | None:
     plan = state.plan
 
     if plan is None:
         return None
 
+    if planning_mode is PlanningMode.STATIC:
+        lines = [
+            "Planning mode: static",
+            f"Goal: {plan.goal}",
+            (
+                "This plan is an advisory roadmap. "
+                "Step statuses are not updated during execution."
+            ),
+            "Roadmap:",
+        ]
+
+        for step in plan.steps:
+            lines.append(f"- {step.id}: {step.description}")
+
+            if step.completion_criteria:
+                lines.append("  Completion criteria: " f"{step.completion_criteria}")
+
+        return "\n".join(lines)
+
     lines = [
+        "Plannig mode: dynamic",
         f"Goal: {plan.goal}",
         f"Plan status: {plan.status}",
     ]
@@ -74,13 +96,14 @@ def _build_plan_section(
 def build_state_context(
     state: AgentState[TaskStateT],
     task: TaskProfile[TaskStateT],
+    planning_mode: PlanningMode,
 ) -> str:
     sections: list[str] = []
 
     agent_section = _build_agent_section(state)
     sections.append("Agent execution state:\n" + agent_section)
 
-    plan_section = _build_plan_section(state)
+    plan_section = _build_plan_section(state, planning_mode)
 
     if plan_section is not None:
         sections.append("Task plan:\n" + plan_section)
@@ -92,18 +115,32 @@ def build_state_context(
 
     plan = state.plan
 
-    if plan is not None and plan.status == "completed":
+    if planning_mode is PlanningMode.NONE:
         next_action_instruction = (
-            "The task plan is complete. Produce the final "
-            "answer using the gathered evidence. Do not call "
-            "additional tools unless they are strictly necessary."
+            "Choose the next action directly from the user request, "
+            "task state, and observations. Use tools only when needed."
+        )
+
+    elif planning_mode is PlanningMode.STATIC:
+        next_action_instruction = (
+            "Use the static plan as an advisory roadmap. "
+            "Its step statuses are not updated during execution. "
+            "Choose the next useful action from the available evidence "
+            "and avoid repeating completed work."
+        )
+
+    elif plan is not None and plan.status == "completed":
+        next_action_instruction = (
+            "The dynamic task plan is complete. Produce the final "
+            "answer using the gathered evidence. Do not call additional "
+            "tools unless they are strictly necessary."
         )
 
     else:
         next_action_instruction = (
-            "Use the current execution state, task state, "
-            "observations, and plan to choose the next action. "
-            "Do not repeat completed work unless necessary."
+            "Follow the current dynamic plan step. Use the execution "
+            "state, task state, and observations to choose the next "
+            "action. Avoid repeating completed work."
         )
 
     return (
