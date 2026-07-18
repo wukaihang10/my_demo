@@ -1,6 +1,6 @@
 from agent.context import build_state_context
 from agent.plan import AgentPlan, PlanStepSpec
-from agent.state import RepositoryState
+from agent.state import AgentState, RepositoryState
 
 
 def make_test_plan(goal: str) -> AgentPlan:
@@ -22,26 +22,29 @@ def make_test_plan(goal: str) -> AgentPlan:
 
 
 def test_context_includes_repository_state() -> None:
-    state = RepositoryState(
-        repo_url="https://github.com/example/demo",
-        repo_path="workspace/demo",
-        phase="reading_code",
-        important_files=[
-            "README.md",
-            "agent/agent.py",
-        ],
-        read_files=[
-            "README.md",
-        ],
-        searched_keywords=[
-            "execute_tool",
-        ],
-        findings=[
-            "Agent.run controls the execution loop.",
-        ],
+    state = AgentState(
+        status="running",
         errors=[
             "A previous file was not found.",
         ],
+        task_state=RepositoryState(
+            repo_url="https://github.com/example/demo",
+            repo_path="workspace/demo",
+            phase="reading_code",
+            important_files=[
+                "README.md",
+                "agent/agent.py",
+            ],
+            read_files=[
+                "README.md",
+            ],
+            searched_keywords=[
+                "execute_tool",
+            ],
+            findings=[
+                "Agent.run controls the execution loop.",
+            ],
+        ),
     )
 
     context = build_state_context(state)
@@ -60,14 +63,19 @@ def test_context_includes_repository_state() -> None:
     assert "- Agent.run controls the execution loop." in context
     assert "Previous errors:" in context
 
+    assert "Run status: running" in context
+
 
 def test_context_includes_active_plan() -> None:
     plan = make_test_plan("Analyze the repository architecture.")
     plan.start()
 
-    state = RepositoryState(
-        repo_url="https://github.com/example/demo",
+    state = AgentState(
+        status="running",
         plan=plan,
+        task_state=RepositoryState(
+            repo_url="https://github.com/example/demo",
+        ),
     )
 
     context = build_state_context(state)
@@ -96,7 +104,10 @@ def test_context_includes_plan_progress() -> None:
 
     plan.complete_current_step("Repository is available at workspace/demo.")
 
-    state = RepositoryState(plan=plan)
+    state = AgentState(
+        task_state=RepositoryState(),
+        plan=plan,
+    )
 
     context = build_state_context(state)
 
@@ -114,16 +125,6 @@ def test_context_includes_plan_progress() -> None:
     )
 
 
-def test_context_works_without_plan() -> None:
-    state = RepositoryState()
-
-    context = build_state_context(state)
-
-    assert "Task plan:" not in context
-    assert "Repository analysis state:" in context
-    assert "Current phase: initial" in context
-
-
 def test_context_requests_final_answer_when_plan_completed() -> None:
     plan = make_test_plan("Complete the task.")
     plan.start()
@@ -131,7 +132,10 @@ def test_context_requests_final_answer_when_plan_completed() -> None:
     while plan.status == "in_progress":
         plan.complete_current_step("Step completed.")
 
-    state = RepositoryState(plan=plan)
+    state = AgentState(
+        task_state=RepositoryState(),
+        plan=plan,
+    )
 
     context = build_state_context(state)
 

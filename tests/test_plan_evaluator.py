@@ -8,7 +8,7 @@ from agent.plan_evaluator import (
     LLMPlanProgressEvaluator,
     PlanEvaluationResponseError,
 )
-from agent.state import RepositoryState
+from agent.state import RepositoryState, AgentState
 
 
 def make_running_plan() -> AgentPlan:
@@ -54,8 +54,10 @@ def test_evaluator_returns_complete_update() -> None:
             """)
 
     plan = make_running_plan()
-    state = RepositoryState(
-        repo_url="https://github.com/example/demo",
+    state = AgentState(
+        task_state=RepositoryState(
+            repo_url="https://github.com/example/demo",
+        ),
         plan=plan,
     )
 
@@ -104,7 +106,10 @@ def test_evaluator_returns_keep_update() -> None:
             """)
 
     plan = make_running_plan()
-    state = RepositoryState(plan=plan)
+    state = AgentState(
+        task_state=RepositoryState(),
+        plan=plan,
+    )
 
     evaluator = LLMPlanProgressEvaluator(
         chat_function=fake_chat,
@@ -133,7 +138,10 @@ def test_evaluator_accepts_fenced_json() -> None:
             ```""")
 
     plan = make_running_plan()
-    state = RepositoryState(plan=plan)
+    state = AgentState(
+        task_state=RepositoryState(),
+        plan=plan,
+    )
 
     evaluator = LLMPlanProgressEvaluator(
         chat_function=fake_chat,
@@ -156,7 +164,10 @@ def test_evaluator_rejects_invalid_json() -> None:
         return make_response("not valid json")
 
     plan = make_running_plan()
-    state = RepositoryState(plan=plan)
+    state = AgentState(
+        task_state=RepositoryState(),
+        plan=plan,
+    )
 
     evaluator = LLMPlanProgressEvaluator(
         chat_function=fake_chat,
@@ -186,7 +197,10 @@ def test_evaluator_rejects_invalid_update() -> None:
             """)
 
     plan = make_running_plan()
-    state = RepositoryState(plan=plan)
+    state = AgentState(
+        task_state=RepositoryState(),
+        plan=plan,
+    )
 
     evaluator = LLMPlanProgressEvaluator(
         chat_function=fake_chat,

@@ -150,7 +150,7 @@ def test_run_returns_direct_final_answer(
 
     assert answer == "Repository analysis completed."
 
-    assert agent.state.phase == "completed"
+    assert agent.state.status == "completed"
     assert agent.trace.status == "completed"
 
     assert agent.trace.steps_used == 1
@@ -349,7 +349,7 @@ def test_run_stops_when_tool_budget_is_exhausted(
     assert len(agent.trace.steps) == 1
     assert len(agent.trace.steps[0].tool_calls) == 1
 
-    assert agent.state.phase == "failed"
+    assert agent.state.status == "failed"
     assert agent.state.plan is not None
     assert agent.state.plan.status == "failed"
     assert agent.state.plan.current_step is not None
@@ -380,7 +380,7 @@ def test_run_records_llm_error(
 
     assert "failed" in answer.lower()
 
-    assert agent.state.phase == "failed"
+    assert agent.state.status == "failed"
     assert agent.trace.status == "llm_error"
 
     assert agent.trace.steps_used == 1
@@ -414,7 +414,7 @@ def test_run_rejects_invalid_max_steps() -> None:
     assert answer == "max_steps must be greater than zero."
 
     assert agent.trace.status == "invalid_max_steps"
-    assert agent.state.phase == "failed"
+    assert agent.state.status == "failed"
 
     assert agent.state.plan is None
 
@@ -431,7 +431,7 @@ def test_run_rejects_invalid_tool_budget() -> None:
     assert answer == "max_tool_calls must be greater than zero."
 
     assert agent.trace.status == "invalid_max_tool_calls"
-    assert agent.state.phase == "failed"
+    assert agent.state.status == "failed"
 
     assert agent.state.plan is None
 
@@ -581,7 +581,7 @@ def test_plan_evaluation_error_is_nonfatal(
         answer
         == "Agent execution stagnated: The executor repeatedly proposed a final answer while the task plan was incomplete. The recovery allowance for the current plan step has been exhausted."
     )
-    assert agent.state.phase == "failed"
+    assert agent.state.status == "failed"
     assert agent.trace.status == "stagnation_rejected_answers"
 
     assert any(
@@ -653,7 +653,7 @@ def test_failed_plan_stops_agent_after_tool_batch(
     assert "required information is unavailable" in answer.lower()
 
     assert executor_call_count == 1
-    assert agent.state.phase == "failed"
+    assert agent.state.status == "failed"
     assert agent.trace.status == "plan_failed"
 
     assert agent.state.plan is not None
@@ -1124,7 +1124,7 @@ def test_agent_recovers_from_stagnation_and_completes(
         {"value": 2},
     ]
 
-    assert agent.state.phase == "completed"
+    assert agent.state.status == "completed"
     assert agent.trace.status == "completed"
 
     assert agent.state.plan is not None

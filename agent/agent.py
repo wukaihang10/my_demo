@@ -7,7 +7,7 @@ from llm.client import chat, LLMClientError
 from tools.registry import TOOLS, TOOL_MAP
 from agent.trace import AgentTrace, StepTrace, ToolTrace
 from agent.observation import process_observation
-from agent.state import RepositoryState
+from agent.state import AgentState, RepositoryState
 from agent.context import build_state_context
 from agent.history import ToolHistory
 
@@ -54,7 +54,9 @@ class Agent:
     ):
         self.tools = TOOL_MAP
         self.trace = AgentTrace()
-        self.state = RepositoryState()
+        self.state: AgentState[RepositoryState] = AgentState(
+            task_state=RepositoryState(),
+        )
         self.tool_history = ToolHistory()
 
         self.planner = planner or LLMPlanner()
@@ -80,30 +82,38 @@ class Agent:
 
         return text[:max_chars] + "...[truncated]"
 
-    def _update_state(self, tool_name: str, arguments: dict, result) -> None:
+    def _update_state(
+        self,
+        tool_name: str,
+        arguments: dict,
+        result,
+    ) -> None:
         if not isinstance(result, dict):
             return
 
         success = result.get("success", False)
 
         if not success:
-            error = result.get("error", f"Tool failed: {tool_name}")
-
+            error = result.get(
+                "error",
+                f"Tool failed: {tool_name}",
+            )
             self.state.add_error(str(error))
             return
+
+        repository_state = self.state.task_state
 
         if tool_name == "clone_repository":
             repo_path = result.get("repo_path")
 
             if repo_path:
-                self.state.repo_path = str(repo_path)
+                repository_state.repo_path = str(repo_path)
 
-            self.state.phase = "understanding"
+            repository_state.phase = "understanding"
 
         elif tool_name == "summarize_repository":
             important_files = result.get("important_files", [])
-
-            self.state.important_files = list(dict.fromkeys(important_files))
+            repository_state.important_files = list(dict.fromkeys(important_files))
 
             summary_fields = (
                 "repo_name",
@@ -114,26 +124,29 @@ class Agent:
                 "readme_path",
             )
 
-            self.state.repository_summary = {
+            repository_state.repository_summary = {
                 field: result.get(field) for field in summary_fields
             }
 
-            self.state.phase = "reading_code"
+            repository_state.phase = "reading_code"
 
         elif tool_name == "list_files":
             files = result.get("files", [])
+
             for file_path in files:
-                self.state.add_list_file(file_path)
+                repository_state.add_list_file(file_path)
 
         elif tool_name == "read_file":
             file_path = result.get("file_path") or arguments.get("file_path")
+
             if file_path:
-                self.state.add_read_file(str(file_path))
+                repository_state.add_read_file(str(file_path))
 
         elif tool_name == "search_code":
             keyword = result.get("keyword") or arguments.get("keyword")
+
             if keyword:
-                self.state.add_search_keyword(str(keyword))
+                repository_state.add_search_keyword(str(keyword))
 
     def _finalize_tool_call(
         self,
@@ -375,19 +388,21 @@ class Agent:
         plan = self.state.plan
 
         if outcome.success:
-            self.state.phase = "completed"
+            self.state.status = "completed"
 
-            if plan is not None and plan.status == "failed":
-                raise RuntimeError(
-                    "A run cannot complete successfully while its plan is failed."
-                )
+            if plan is not None:
+                if plan.status == "failed":
+                    raise RuntimeError(
+                        "A run cannot complete successfully "
+                        "while its plan is failed."
+                    )
 
-            plan.finish(result=outcome.answer)
+                plan.finish(result=outcome.answer)
 
         else:
             assert outcome.error is not None
 
-            self.state.phase = "failed"
+            self.state.status = "failed"
             self.state.add_error(outcome.error)
 
             if step_trace is not None:
@@ -443,8 +458,10 @@ class Agent:
             max_tool_calls=max_tool_calls,
         )
 
-        self.state = RepositoryState(
-            repo_url=repo_url,
+        self.state = AgentState(
+            task_state=RepositoryState(
+                repo_url=repo_url,
+            ),
         )
 
         self.tool_history = ToolHistory()
@@ -482,6 +499,8 @@ class Agent:
                 error=error_message,
                 stop_reason="invalid_max_tool_calls",
             )
+
+        self.state.status = "running"
 
         try:
             plan = self.planner.create_plan(user_input)

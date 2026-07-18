@@ -1,6 +1,6 @@
 from typing import Any
 
-from agent.state import RepositoryState
+from agent.state import AgentState, RepositoryState
 
 
 def _format_summary_value(value: Any) -> str:
@@ -14,7 +14,7 @@ def _format_summary_value(value: Any) -> str:
 
 
 def _build_plan_section(
-    state: RepositoryState,
+    state: AgentState[Any],
 ) -> str | None:
     plan = state.plan
 
@@ -60,6 +60,20 @@ def _build_plan_section(
     return "\n".join(lines)
 
 
+def _build_agent_section(
+    state: AgentState[Any],
+) -> str:
+    lines = [
+        f"Run status: {state.status}",
+    ]
+
+    if state.errors:
+        lines.append("Previous errors:")
+        lines.extend(f"- {error}" for error in state.errors)
+
+    return "\n".join(lines)
+
+
 def _build_repository_section(
     state: RepositoryState,
 ) -> str:
@@ -98,24 +112,24 @@ def _build_repository_section(
         lines.append("Findings gathered:")
         lines.extend(f"- {finding}" for finding in state.findings)
 
-    if state.errors:
-        lines.append("Previous errors:")
-        lines.extend(f"- {error}" for error in state.errors)
-
     return "\n".join(lines)
 
 
-def build_state_context(state: RepositoryState) -> str:
+def build_state_context(
+    state: AgentState[RepositoryState],
+) -> str:
     sections: list[str] = []
+
+    agent_section = _build_agent_section(state)
+    sections.append(f"Agent execution state:\n{agent_section}")
 
     plan_section = _build_plan_section(state)
 
     if plan_section is not None:
         sections.append(f"Task plan:\n{plan_section}")
 
-    repository_section = _build_repository_section(state)
-
-    sections.append(f"Repository analysis state:\n{repository_section}")
+    repository_section = _build_repository_section(state.task_state)
+    sections.append("Repository analysis state:\n" + repository_section)
 
     plan = state.plan
 
