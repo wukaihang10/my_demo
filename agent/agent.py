@@ -375,7 +375,7 @@ class Agent:
         plan = self.state.plan
 
         if outcome.success:
-            self.state.plan = "completed"
+            self.state.phase = "completed"
 
             if plan is not None and plan.status == "failed":
                 raise RuntimeError(
@@ -397,7 +397,7 @@ class Agent:
             if plan is not None and plan.status == "in_progress":
                 plan.fail(outcome.error)
 
-        self.trace.finish(outcome.step_reason)
+        self.trace.finish(outcome.stop_reason)
 
         return outcome.response
 
@@ -472,7 +472,7 @@ class Agent:
 
             return self._fail_run(
                 error=error_message,
-                stop_reason="invalid_configuration",
+                stop_reason="invalid_max_steps",
             )
 
         if max_tool_calls <= 0:
@@ -480,7 +480,7 @@ class Agent:
 
             return self._fail_run(
                 error=error_message,
-                stop_reason="invalid_configuration",
+                stop_reason="invalid_max_tool_calls",
             )
 
         try:
@@ -540,7 +540,7 @@ class Agent:
 
                     return self._complete_run(
                         answer=candidate_response,
-                        step_traaace=step_trace,
+                        step_trace=step_trace,
                     )
 
                 self.stagnation_tracker.record_final_answer_rejection(
