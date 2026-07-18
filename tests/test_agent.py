@@ -14,6 +14,9 @@ from agent.plan_update import (
 from agent.final_answer import FinalAnswerPolicy
 from agent.stagnation import StagnationPolicy
 
+from agent.task import TaskProfile
+from tools.base import Tool
+
 
 class FakePlanner:
     def create_plan(
@@ -1148,3 +1151,142 @@ def test_agent_recovers_from_stagnation_and_completes(
         and "different tool, different arguments" in message.get("content", "")
         for message in second_request
     )
+
+
+def test_agent_delegates_task_specific_behavior(
+    monkeypatch,
+) -> None:
+    received_requests: list[tuple[list[dict[str, Any]], list[dict[str, Any]]]] = []
+
+    tool_call = make_tool_call(
+        name="store_value",
+        arguments={"value": 42},
+    )
+
+    responses = iter(
+        [
+            FakeMessage(tool_calls=[tool_call]),
+            FakeMessage(content="Custom task completed."),
+        ]
+    )
+
+    def fake_chat(messages, tools):
+        received_requests.append((messages, tools))
+        return next(responses)
+
+    monkeypatch.setattr(
+        agent_module,
+        "chat",
+        fake_chat,
+    )
+
+    def store_value(
+        value: int,
+    ) -> dict[str, Any]:
+        return {
+            "success": True,
+            "value": value,
+        }
+
+    custom_tool = Tool(
+        name="store_value",
+        description="Store one value.",
+        function=store_value,
+        parameters={
+            "type": "object",
+            "properties": {
+                "value": {
+                    "type": "integer",
+                }
+            },
+            "required": ["value"],
+        },
+    )
+
+    def create_state(
+        input_data: dict[str, Any],
+    ) -> dict[str, Any]:
+        return {
+            "label": input_data.get("label"),
+            "values": [],
+        }
+
+    def reduce_tool_result(
+        state: dict[str, Any],
+        tool_name: str,
+        arguments: dict[str, Any],
+        result: dict[str, Any],
+    ) -> None:
+        if tool_name == "store_value" and result.get("success") is True:
+            state["values"].append(result["value"])
+
+    def build_context(
+        state: dict[str, Any],
+    ) -> str:
+        return f"Label: {state['label']}\n" f"Stored values: {state['values']}"
+
+    task = TaskProfile[dict[str, Any]](
+        name="custom_task",
+        system_prompt=("You are executing a custom test task."),
+        tools=(custom_tool,),
+        create_state=create_state,
+        reduce_tool_result=reduce_tool_result,
+        build_context=build_context,
+    )
+
+    evaluator = FakePlanEvaluator(
+        updates=[
+            PlanUpdate.from_dict(
+                {
+                    "action": ("complete_current_step"),
+                    "result": ("The value was stored."),
+                }
+            )
+        ]
+    )
+
+    agent = Agent(
+        task=task,
+        planner=FakePlanner(),
+        plan_evaluator=evaluator,
+    )
+
+    result = agent.run(
+        user_input="Store the value.",
+        max_steps=3,
+        max_tool_calls=3,
+        task_input={
+            "label": "example",
+        },
+    )
+
+    assert result == "Custom task completed."
+
+    assert agent.state.task_state == {
+        "label": "example",
+        "values": [42],
+    }
+
+    first_messages, first_tools = received_requests[0]
+
+    assert first_messages[0] == {
+        "role": "system",
+        "content": ("You are executing a custom test task."),
+    }
+
+    assert first_tools[0]["function"]["name"] == "store_value"
+
+    second_messages, _ = received_requests[1]
+
+    state_messages = [
+        message
+        for message in second_messages
+        if (
+            message.get("role") == "system"
+            and "Task-specific state (custom_task)" in message.get("content", "")
+        )
+    ]
+
+    assert len(state_messages) == 1
+    assert "Label: example" in state_messages[0]["content"]
+    assert "Stored values: [42]" in state_messages[0]["content"]

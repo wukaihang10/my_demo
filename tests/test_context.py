@@ -1,6 +1,16 @@
 from agent.context import build_state_context
 from agent.plan import AgentPlan, PlanStepSpec
 from agent.state import AgentState, RepositoryState
+from tasks.repository import REPOSITORY_TASK
+
+
+def build_repository_state_context(
+    state: AgentState[RepositoryState],
+) -> str:
+    return build_state_context(
+        state,
+        REPOSITORY_TASK,
+    )
 
 
 def make_test_plan(goal: str) -> AgentPlan:
@@ -47,9 +57,9 @@ def test_context_includes_repository_state() -> None:
         ),
     )
 
-    context = build_state_context(state)
+    context = build_repository_state_context(state)
 
-    assert "Current phase: reading_code" in context
+    assert "Current repository phase: running" in context
     assert "Repository URL: https://github.com/example/demo" in context
 
     assert "Repository path: workspace/demo" in context
@@ -78,7 +88,7 @@ def test_context_includes_active_plan() -> None:
         ),
     )
 
-    context = build_state_context(state)
+    context = build_repository_state_context(state)
 
     assert "Task plan:" in context
     assert "Goal: Analyze the repository architecture." in context
@@ -109,7 +119,7 @@ def test_context_includes_plan_progress() -> None:
         plan=plan,
     )
 
-    context = build_state_context(state)
+    context = build_repository_state_context(state)
 
     assert "[completed] 1. Prepare the repository for inspection." in context
 
@@ -137,7 +147,7 @@ def test_context_requests_final_answer_when_plan_completed() -> None:
         plan=plan,
     )
 
-    context = build_state_context(state)
+    context = build_repository_state_context(state)
 
     assert "Plan status: completed" in context
     assert "Current step: none" in context

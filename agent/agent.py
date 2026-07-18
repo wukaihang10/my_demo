@@ -4,10 +4,11 @@ import inspect
 from typing import Any
 
 from llm.client import chat, LLMClientError
-from tools.registry import TOOLS, TOOL_MAP
 from agent.trace import AgentTrace, StepTrace, ToolTrace
 from agent.observation import process_observation
-from agent.state import AgentState, RepositoryState
+from agent.state import AgentState
+from agent.task import TaskProfile
+from tasks.repository import REPOSITORY_TASK
 from agent.context import build_state_context
 from agent.history import ToolHistory
 
@@ -20,42 +21,28 @@ from agent.stagnation import StagnationDecision, StagnationPolicy, StagnationTra
 from agent.outcome import AgentRunOutcome
 from agent.execution import ToolBatchResult
 
-TOOL_SCHEMAS = [tool.schema() for tool in TOOLS]
-
-SYSTEM_PROMPT = """
-You are a GitHub repository analysis agent.
-
-Use the available tools to inspect repositories and answer questions
-using evidence from actual repository files.
-
-Rules:
-
-1. Do not guess repository details.
-2. Clone a repository when needed.
-3. Use summarize_repository to obtain a high-level overview.
-4. Inspect the repository structure before selecting files.
-5. Read the README when it exists.
-6. Read relevant source and configuration files before explaining code.
-7. Use search_code when you do not know where something is implemented.
-8. Avoid reading every file.
-9. If a tool fails, inspect the error and try a reasonable alternative.
-10. Only give the final answer after gathering enough evidence.
-"""
-
 
 class Agent:
+
     def __init__(
         self,
+        task: TaskProfile[Any] | None = None,
         planner: LLMPlanner | None = None,
         plan_evaluator: LLMPlanProgressEvaluator | None = None,
         plan_update_policy: PlanUpdatePolicy | None = None,
         final_answer_policy: FinalAnswerPolicy | None = None,
         stagnation_policy: StagnationPolicy | None = None,
     ):
-        self.tools = TOOL_MAP
+        self.task = task or REPOSITORY_TASK
+
+        self.tools = {tool.name: tool for tool in self.task.tools}
+
+        self.tool_schemas = [tool.schema() for tool in self.task.tools]
+
         self.trace = AgentTrace()
-        self.state: AgentState[RepositoryState] = AgentState(
-            task_state=RepositoryState(),
+
+        self.state: AgentState[Any] = AgentState(
+            task_state=self.task.create_state({}),
         )
         self.tool_history = ToolHistory()
 
@@ -81,72 +68,6 @@ class Agent:
             return text
 
         return text[:max_chars] + "...[truncated]"
-
-    def _update_state(
-        self,
-        tool_name: str,
-        arguments: dict,
-        result,
-    ) -> None:
-        if not isinstance(result, dict):
-            return
-
-        success = result.get("success", False)
-
-        if not success:
-            error = result.get(
-                "error",
-                f"Tool failed: {tool_name}",
-            )
-            self.state.add_error(str(error))
-            return
-
-        repository_state = self.state.task_state
-
-        if tool_name == "clone_repository":
-            repo_path = result.get("repo_path")
-
-            if repo_path:
-                repository_state.repo_path = str(repo_path)
-
-            repository_state.phase = "understanding"
-
-        elif tool_name == "summarize_repository":
-            important_files = result.get("important_files", [])
-            repository_state.important_files = list(dict.fromkeys(important_files))
-
-            summary_fields = (
-                "repo_name",
-                "total_files",
-                "top_level_structure",
-                "languages",
-                "extensions",
-                "readme_path",
-            )
-
-            repository_state.repository_summary = {
-                field: result.get(field) for field in summary_fields
-            }
-
-            repository_state.phase = "reading_code"
-
-        elif tool_name == "list_files":
-            files = result.get("files", [])
-
-            for file_path in files:
-                repository_state.add_list_file(file_path)
-
-        elif tool_name == "read_file":
-            file_path = result.get("file_path") or arguments.get("file_path")
-
-            if file_path:
-                repository_state.add_read_file(str(file_path))
-
-        elif tool_name == "search_code":
-            keyword = result.get("keyword") or arguments.get("keyword")
-
-            if keyword:
-                repository_state.add_search_keyword(str(keyword))
 
     def _finalize_tool_call(
         self,
@@ -181,10 +102,14 @@ class Agent:
             error=error_message,
         )
 
-        self._update_state(
-            tool_name=tool_name,
-            arguments=arguments,
-            result=normalized_result,
+        if not success and error_message is not None:
+            self.state.add_error(error_message)
+
+        self.task.reduce_tool_result(
+            self.state.task_state,
+            tool_name,
+            arguments,
+            normalized_result,
         )
 
         return normalized_result, trace
@@ -449,7 +374,7 @@ class Agent:
     def _reset_run_state(
         self,
         *,
-        repo_url: str | None,
+        task_input: dict[str, Any],
         max_steps: int,
         max_tool_calls: int,
     ) -> None:
@@ -459,9 +384,7 @@ class Agent:
         )
 
         self.state = AgentState(
-            task_state=RepositoryState(
-                repo_url=repo_url,
-            ),
+            task_state=self.task.create_state(task_input),
         )
 
         self.tool_history = ToolHistory()
@@ -471,6 +394,7 @@ class Agent:
         )
 
         self.stagnation_tracker = StagnationTracker()
+
         self.last_outcome = None
 
     def run(
@@ -479,9 +403,21 @@ class Agent:
         max_steps: int = 10,
         max_tool_calls: int = 30,
         repo_url: str | None = None,
+        task_input: dict[str, Any] | None = None,
     ) -> str:
+        initial_task_input = dict(task_input or {})
+
+        # Temporary compatibility for existing repository callers.
+        if repo_url is not None:
+            initial_task_input.setdefault(
+                "repo_url",
+                repo_url,
+            )
+
         self._reset_run_state(
-            repo_url=repo_url, max_steps=max_steps, max_tool_calls=max_tool_calls
+            task_input=initial_task_input,
+            max_steps=max_steps,
+            max_tool_calls=max_tool_calls,
         )
 
         if max_steps <= 0:
@@ -520,7 +456,7 @@ class Agent:
             )
 
         messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": self.task.system_prompt},
             {"role": "user", "content": user_input},
         ]
 
@@ -529,11 +465,17 @@ class Agent:
 
             step_trace = StepTrace(step=step_number)
 
-            state_context = build_state_context(self.state)
+            state_context = build_state_context(
+                self.state,
+                self.task,
+            )
 
             request_messages = [*messages, {"role": "system", "content": state_context}]
             try:
-                response = chat(request_messages, TOOL_SCHEMAS)
+                response = chat(
+                    request_messages,
+                    self.tool_schemas,
+                )
             except LLMClientError as error:
                 error_message = f"LLM request failed at step {step_number}: {error}"
 
