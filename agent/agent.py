@@ -4,12 +4,24 @@ import inspect
 from typing import Any
 
 from llm.client import chat, LLMClientError
+from llm.messages import (
+    ChatMessage,
+    assistant_message,
+    assistant_tool_call_message,
+    system_message,
+    tool_result_message,
+    user_message,
+    serialize_tool_call,
+)
+
+from agent.run_context import RunContext
+
 from agent.trace import AgentTrace, StepTrace, ToolTrace
 from agent.observation import process_observation
 from agent.state import AgentState
 from agent.task import TaskProfile
 from agent.context import build_state_context
-from agent.history import ToolHistory
+from agent.tool_history import ToolHistory
 
 from agent.plan import PlanError
 from agent.planner import LLMPlanner, PlannerError
@@ -43,13 +55,6 @@ class Agent:
 
         self.tool_schemas = [tool.schema() for tool in self.task.tools]
 
-        self.trace = AgentTrace()
-
-        self.state: AgentState[Any] = AgentState(
-            task_state=self.task.create_state({}),
-        )
-        self.tool_history = ToolHistory()
-
         self.planner = planner
         if self.planner is None and self._uses_planning():
             self.planner = LLMPlanner()
@@ -79,11 +84,34 @@ class Agent:
         if self.stagnation_policy is None and self._uses_stagnation_recovery():
             self.stagnation_policy = StagnationPolicy()
 
-        self.stagnation_tracker = None
-        if self._uses_stagnation_recovery():
-            self.stagnation_tracker = StagnationTracker()
+        self._run_context: RunContext[Any] | None = None
 
-        self.last_outcome: AgentRunOutcome | None = None
+    @property
+    def state(self) -> AgentState[Any]:
+        return self._require_run_context().state
+
+    @property
+    def trace(self) -> AgentTrace:
+        return self._require_run_context().trace
+
+    @property
+    def tool_history(self) -> ToolHistory:
+        return self._require_run_context().tool_history
+
+    @property
+    def stagnation_tracker(
+        self,
+    ) -> StagnationTracker | None:
+        return self._require_run_context().stagnation_tracker
+
+    @property
+    def last_outcome(
+        self,
+    ) -> AgentRunOutcome | None:
+        if self._run_context is None:
+            return None
+
+        return self._run_context.outcome
 
     def _preview(self, value, max_chars: int = 500) -> str:
         try:
@@ -156,7 +184,7 @@ class Agent:
 
         if self.plan_controller is None:
             raise RuntimeError(
-                "Dynamic plannig is enabled, but no plan controller is configured."
+                "Dynamic planning is enabled, but no plan controller is configured."
             )
 
         if plan is None:
@@ -308,8 +336,8 @@ class Agent:
         *,
         decision: StagnationDecision,
         step_trace: StepTrace,
-        messages: list[dict[str, Any]],
     ) -> None:
+        messages = self._require_run_context().messages
         if self.stagnation_tracker is None:
             raise RuntimeError(
                 "Cannot record stagnation recovery without a stagnation tracker."
@@ -328,12 +356,7 @@ class Agent:
             recovery_attempt=recovery_attempt,
         )
 
-        messages.append(
-            {
-                "role": "system",
-                "content": recovery_message,
-            }
-        )
+        messages.append(system_message(recovery_message))
 
         if step_trace.stagnation is None:
             step_trace.stagnation = {}
@@ -365,7 +388,9 @@ class Agent:
     ) -> str:
         self._add_step_trace_once(step_trace)
 
-        self.last_outcome = outcome
+        run_context = self._require_run_context()
+
+        run_context.outcome = outcome
 
         plan = self.state.plan
 
@@ -428,45 +453,49 @@ class Agent:
             step_trace=step_trace,
         )
 
-    def _reset_run_state(
+    def _start_run(
         self,
         *,
+        user_input: str,
         task_input: dict[str, Any],
         max_steps: int,
         max_tool_calls: int,
     ) -> None:
-        self.trace = AgentTrace(
+        task_state = self.task.create_state(task_input)
+
+        state = AgentState(
+            task_state=task_state,
+        )
+
+        trace = AgentTrace(
             max_steps=max_steps,
             max_tool_calls=max_tool_calls,
         )
 
-        self.state = AgentState(
-            task_state=self.task.create_state(task_input),
-        )
+        messages: list[ChatMessage] = [
+            system_message(self.task.system_prompt),
+            user_message(user_input),
+        ]
 
-        self.tool_history = ToolHistory()
+        stagnation_tracker = None
 
-        self.plan_controller = None
-        if self._uses_dynamic_planning():
-            if self.plan_update_policy is None:
-                raise RuntimeError("Dynamic planning requires " "a plan update policy.")
-
-            self.plan_controller = PlanController(
-                policy=self.plan_update_policy,
-            )
-
-        self.stagnation_tracker = None
         if self._uses_stagnation_recovery():
-            self.stagnation_tracker = StagnationTracker()
+            stagnation_tracker = StagnationTracker()
 
-        self.last_outcome = None
+        self._run_context = RunContext(
+            user_input=user_input,
+            task_input=dict(task_input),
+            state=state,
+            trace=trace,
+            messages=messages,
+            tool_history=ToolHistory(),
+            stagnation_tracker=(stagnation_tracker),
+        )
 
     def _initialize_plan(
         self,
         user_input: str,
     ) -> None:
-        mode = self.config.planning_mode
-
         if not self._uses_planning():
             self.state.plan = None
             return
@@ -474,12 +503,6 @@ class Agent:
             raise RuntimeError("Planning is enabled, but no planner is configured.")
 
         plan = self.planner.create_plan(user_input)
-
-        if len(plan.steps) > self.plan_update_policy.max_total_steps:
-            # 默认配置下这个条件不会触发，Planner最多6步，PlanUpdatePolicy最多10步
-            raise PlannerError(
-                f"The initial plan contains {len(plan.steps)} steps, but the runtime plan limit is {self.plan_update_policy.max_total_steps}"
-            )
 
         plan.start()
         self.state.plan = plan
@@ -509,7 +532,6 @@ class Agent:
         self,
         *,
         candidate_response: str,
-        messages: list[dict[str, Any]],
         step_trace: StepTrace,
     ) -> str | None:
         """
@@ -518,6 +540,8 @@ class Agent:
         Return a final response string when the run should stop.
         Return None when the response is rejected and execution should continue.
         """
+        messages = self._require_run_context().messages
+
         if not self._uses_final_answer_guard():
             step_trace.final_response = candidate_response
 
@@ -547,20 +571,10 @@ class Agent:
             )
 
         if candidate_response.strip():
-            messages.append(
-                {
-                    "role": "assistant",
-                    "content": candidate_response,
-                }
-            )
+            messages.append(assistant_message(candidate_response))
 
         messages.append(
-            {
-                "role": "system",
-                "content": (
-                    self._build_final_answer_rejection_message(decision.reason)
-                ),
-            }
+            system_message(self._build_final_answer_rejection_message(decision.reason))
         )
 
         if self._uses_stagnation_recovery():
@@ -591,7 +605,6 @@ class Agent:
         self,
         *,
         response: Any,
-        messages: list[dict[str, Any]],
         step_trace: StepTrace,
         max_tool_calls: int,
     ) -> str | None:
@@ -601,8 +614,18 @@ class Agent:
         Return a final response string when the run should stop.
         Return None when execution should continue.
         """
+        messages = self._require_run_context().messages
 
-        messages.append(response.model_dump(exclude_none=True))
+        serialized_tool_calls = [
+            serialize_tool_call(tool_call) for tool_call in response.tool_calls
+        ]
+
+        messages.append(
+            assistant_tool_call_message(
+                content=response.content,
+                tool_calls=serialized_tool_calls,
+            )
+        )
 
         latest_evidence: list[dict[str, Any]] = []
 
@@ -645,7 +668,11 @@ class Agent:
             content = process_observation(result)
 
             messages.append(
-                {"role": "tool", "tool_call_id": tool_call.id, "content": content}
+                tool_result_message(
+                    tool_call_id=tool_call.id,
+                    tool_name=tool_trace.tool_name,
+                    result=result,
+                )
             )
 
         step_id_before_evaluation = self._get_current_plan_step_id()
@@ -710,7 +737,6 @@ class Agent:
     def _run_iteration(
         self,
         *,
-        messages: list[dict[str, Any]],
         step_index: int,
         max_tool_calls: int,
     ) -> str | None:
@@ -720,6 +746,10 @@ class Agent:
         Return a final response string when the run should stop.
         Return None when the agent should continue to the next iteration.
         """
+        run_context = self._require_run_context()
+
+        messages = run_context.messages
+
         print(f"\n===== Step {step_index} =====")
 
         step_trace = StepTrace(step=step_index)
@@ -730,7 +760,10 @@ class Agent:
             self.config.planning_mode,
         )
 
-        request_messages = [*messages, {"role": "system", "content": state_context}]
+        request_messages = [
+            *messages,
+            system_message(state_context),
+        ]
         try:
             response = chat(
                 request_messages,
@@ -763,6 +796,16 @@ class Agent:
             max_tool_calls=max_tool_calls,
         )
 
+    def _require_run_context(
+        self,
+    ) -> RunContext[Any]:
+        run_context = self._run_context
+
+        if run_context is None:
+            raise RuntimeError("No active agent run exists.")
+
+        return run_context
+
     def run(
         self,
         user_input: str,
@@ -772,7 +815,8 @@ class Agent:
     ) -> str:
         initial_task_input = dict(task_input or {})
 
-        self._reset_run_state(
+        self._start_run(
+            user_input=user_input,
             task_input=initial_task_input,
             max_steps=max_steps,
             max_tool_calls=max_tool_calls,
@@ -804,14 +848,9 @@ class Agent:
                 stop_reason="planning_failed",
             )
 
-        messages = [
-            {"role": "system", "content": self.task.system_prompt},
-            {"role": "user", "content": user_input},
-        ]
-
         for step_index in range(1, max_steps + 1):
             final_response = self._run_iteration(
-                messages=messages, step_index=step_index, max_tool_calls=max_tool_calls
+                step_index=step_index, max_tool_calls=max_tool_calls
             )
 
             if final_response is not None:
@@ -819,7 +858,7 @@ class Agent:
 
         return self._fail_run(
             error=f"Agent reached the maximum number of steps: {max_steps}.",
-            stop_reason="max_Steps_exceeded",
+            stop_reason="max_steps_exceeded",
         )
 
     def execute_tool(self, tool_call) -> tuple[dict, ToolTrace]:

@@ -69,9 +69,9 @@ Requirements:
 """
 
     answer = agent.run(
-        task,
+        user_input=task,
         max_steps=15,
-        user_input={"repo_url": repo_url},
+        task_input={"repo_url": repo_url},
     )
 
     return {
