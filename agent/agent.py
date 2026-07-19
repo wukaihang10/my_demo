@@ -438,17 +438,9 @@ class Agent:
         user_input: str,
         max_steps: int = 10,
         max_tool_calls: int = 30,
-        repo_url: str | None = None,
         task_input: dict[str, Any] | None = None,
     ) -> str:
         initial_task_input = dict(task_input or {})
-
-        # Temporary compatibility for existing repository callers.
-        if repo_url is not None:
-            initial_task_input.setdefault(
-                "repo_url",
-                repo_url,
-            )
 
         self._reset_run_state(
             task_input=initial_task_input,

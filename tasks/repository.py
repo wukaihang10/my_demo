@@ -36,10 +36,15 @@ REPOSITORY_TOOL_NAMES = (
 def create_repository_state(
     input_data: dict[str, Any],
 ) -> RepositoryState:
-    repo_url = input_data.get("repo_url")
+    raw_repo_url = input_data.get("repo_url")
 
-    if repo_url is not None:
-        repo_url = str(repo_url)
+    repo_url: str | None = None
+
+    if raw_repo_url is not None:
+        repo_url = str(raw_repo_url).strip()
+
+        if not repo_url:
+            repo_url = None
 
     return RepositoryState(
         repo_url=repo_url,
