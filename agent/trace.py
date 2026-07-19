@@ -40,7 +40,6 @@ class AgentTrace:
     )
 
     finished_at: str | None = None
-    status: str = "running"
     steps: list[StepTrace] = field(default_factory=list)
 
     def add_step(self, step: StepTrace) -> None:
@@ -50,8 +49,7 @@ class AgentTrace:
     def record_tool_call(self) -> None:
         self.tool_calls_used += 1
 
-    def finish(self, status: str) -> None:
-        self.status = status
+    def finish(self) -> None:
         self.finished_at = datetime.now(timezone.utc).isoformat()
 
     def to_dict(self) -> dict[str, Any]:

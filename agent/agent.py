@@ -18,7 +18,7 @@ from agent.run_context import RunContext
 
 from agent.trace import AgentTrace, StepTrace, ToolTrace
 from agent.observation import process_observation
-from agent.state import AgentState
+from agent.state import AgentState, RunStatus
 from agent.task import TaskProfile
 from agent.context import build_state_context
 from agent.tool_history import ToolHistory
@@ -386,16 +386,19 @@ class Agent:
         outcome: AgentRunOutcome,
         step_trace: StepTrace | None = None,
     ) -> str:
-        self._add_step_trace_once(step_trace)
-
         run_context = self._require_run_context()
+
+        if run_context.is_finished:
+            raise RuntimeError("The current agent run has already been finalized.")
+
+        self._add_step_trace_once(step_trace)
 
         run_context.outcome = outcome
 
         plan = self.state.plan
 
         if outcome.success:
-            self.state.status = "completed"
+            self.state.status = RunStatus.COMPLETED
 
             if plan is not None:
                 if plan.status == "failed":
@@ -409,7 +412,7 @@ class Agent:
         else:
             assert outcome.error is not None
 
-            self.state.status = "failed"
+            self.state.status = RunStatus.FAILED
             self.state.add_error(outcome.error)
 
             if step_trace is not None:
@@ -419,7 +422,7 @@ class Agent:
             if plan is not None and plan.status == "in_progress":
                 plan.fail(outcome.error)
 
-        self.trace.finish(outcome.stop_reason)
+        self.trace.finish()
 
         return outcome.response
 
@@ -838,7 +841,7 @@ class Agent:
                 stop_reason="invalid_max_tool_calls",
             )
 
-        self.state.status = "running"
+        self.state.status = RunStatus.RUNNING
 
         try:
             self._initialize_plan(user_input)

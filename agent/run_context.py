@@ -25,3 +25,7 @@ class RunContext(Generic[TaskStateT]):
 
     stagnation_tracker: StagnationTracker | None = None
     outcome: AgentRunOutcome | None = None
+
+    @property
+    def is_finished(self) -> bool:
+        return self.outcome is not None
