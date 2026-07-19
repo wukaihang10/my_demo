@@ -8,7 +8,6 @@ from agent.trace import AgentTrace, StepTrace, ToolTrace
 from agent.observation import process_observation
 from agent.state import AgentState
 from agent.task import TaskProfile
-from tasks.repository import REPOSITORY_TASK
 from agent.context import build_state_context
 from agent.history import ToolHistory
 
@@ -27,7 +26,7 @@ class Agent:
 
     def __init__(
         self,
-        task: TaskProfile[Any] | None = None,
+        task: TaskProfile[Any],
         planner: LLMPlanner | None = None,
         plan_evaluator: LLMPlanProgressEvaluator | None = None,
         plan_update_policy: PlanUpdatePolicy | None = None,
@@ -35,7 +34,7 @@ class Agent:
         stagnation_policy: StagnationPolicy | None = None,
         config: AgentConfig | None = None,
     ):
-        self.task = task or REPOSITORY_TASK
+        self.task = task
 
         self.tools = {tool.name: tool for tool in self.task.tools}
 
@@ -192,6 +191,9 @@ class Agent:
         self,
         step_trace: StepTrace,
     ) -> StagnationDecision:
+        if not self._uses_stagnation_recovery():
+            return None
+
         snapshot = self.stagnation_tracker.snapshot()
 
         decision = self.stagnation_policy.evaluate(snapshot)
@@ -514,52 +516,61 @@ class Agent:
             if not response.tool_calls:
                 candidate_response = response.content or ""
 
-                if self._uses_final_answer_guard():
-                    decision = self.final_answer_policy.evaluate(
-                        plan=self.state.plan,
-                        tool_calls_used=self.trace.tool_calls_used,
-                        response_content=candidate_response,
+                if not self._uses_final_answer_guard():
+                    step_trace.final_response = candidate_response
+
+                    return self._complete_run(
+                        answer=candidate_response,
+                        step_trace=step_trace,
                     )
 
-                    step_trace.final_answer_decision = decision.to_dict()
+                decision = self.final_answer_policy.evaluate(
+                    plan=self.state.plan,
+                    tool_calls_used=self.trace.tool_calls_used,
+                    response_content=candidate_response,
+                )
 
-                    if decision.allowed:
-                        step_trace.final_response = candidate_response
+                step_trace.final_answer_decision = decision.to_dict()
 
-                        return self._complete_run(
-                            answer=candidate_response,
-                            step_trace=step_trace,
-                        )
-                    if self._uses_stagnation_recovery():
-                        self.stagnation_tracker.record_final_answer_rejection(
-                            self._get_current_plan_step_id()
-                        )
+                if decision.allowed:
+                    step_trace.final_response = candidate_response
+
+                    return self._complete_run(
+                        answer=candidate_response,
+                        step_trace=step_trace,
+                    )
+
+                if candidate_response.strip():
+                    messages.append(
+                        {
+                            "role": "assistant",
+                            "content": candidate_response,
+                        }
+                    )
+
+                messages.append(
+                    {
+                        "role": "system",
+                        "content": (
+                            self._build_final_answer_rejection_message(decision.reason)
+                        ),
+                    }
+                )
+
+                if self._uses_stagnation_recovery():
+                    self.stagnation_tracker.record_final_answer_rejection(
+                        self._get_current_plan_step_id()
+                    )
 
                     stagnation_decision = self._evaluate_stagnation(step_trace)
+
+                    assert stagnation_decision is not None
 
                     if stagnation_decision.should_stop:
                         return self._stop_for_stagnation(
                             decision=stagnation_decision,
                             step_trace=step_trace,
                         )
-
-                    if candidate_response.strip():
-
-                        messages.append(
-                            {
-                                "role": "assistant",
-                                "content": candidate_response,
-                            }
-                        )
-
-                    messages.append(
-                        {
-                            "role": "system",
-                            "content": self._build_final_answer_rejection_message(
-                                decision.reason
-                            ),
-                        }
-                    )
 
                     if stagnation_decision.should_recover:
                         self._apply_stagnation_recovery(
@@ -568,13 +579,8 @@ class Agent:
                             messages=messages,
                         )
 
-                    self.trace.add_step(step_trace)
-                    continue
-
-                return self._complete_run(
-                    answer=candidate_response,
-                    step_trace=step_trace,
-                )
+                self.trace.add_step(step_trace)
+                continue
 
             # 下面是工具调用循环
             messages.append(response.model_dump(exclude_none=True))
@@ -630,6 +636,7 @@ class Agent:
 
             if self._uses_dynamic_planning():
                 step_trace.plan_update = self._evaluate_plan_progress(latest_evidence)
+
                 plan_update_result = step_trace.plan_update
 
                 if self._uses_stagnation_recovery():
@@ -638,54 +645,45 @@ class Agent:
                             self.stagnation_tracker.record_evaluation_error(
                                 self._get_current_plan_step_id()
                             )
-
                         else:
                             action = plan_update_result.get("action")
 
                             if isinstance(action, str):
                                 self.stagnation_tracker.record_plan_update(
                                     action=action,
-                                    current_step_id=self._get_current_plan_step_id(),
+                                    current_step_id=(self._get_current_plan_step_id()),
                                 )
 
-            plan = self.state.plan
+                plan = self.state.plan
 
-            if plan is not None and plan.status == "failed":
-                plan_error = (
-                    plan.error or "The task plan failed without an error message."
-                )
+                if plan is not None and plan.status == "failed":
+                    plan_error = (
+                        plan.error or "The task plan failed without an error message."
+                    )
 
-                error_message = f"The task plan failed: {plan_error}"
+                    return self._fail_run(
+                        error=f"The task plan failed: {plan_error}",
+                        stop_reason="plan_failed",
+                        step_trace=step_trace,
+                    )
 
-                return self._fail_run(
-                    error=error_message,
-                    stop_reason="plan_failed",
-                    step_trace=step_trace,
-                )
+            if self._uses_stagnation_recovery():
+                stagnation_decision = self._evaluate_stagnation(step_trace)
 
-            stagnation_decision = self._evaluate_stagnation(step_trace)
+                assert stagnation_decision is not None
 
-            if stagnation_decision.should_stop:
-                return self._stop_for_stagnation(
-                    decision=stagnation_decision,
-                    step_trace=step_trace,
-                )
+                if stagnation_decision.should_stop:
+                    return self._stop_for_stagnation(
+                        decision=stagnation_decision,
+                        step_trace=step_trace,
+                    )
 
-            if stagnation_decision.should_recover:
-                self._apply_stagnation_recovery(
-                    decision=stagnation_decision,
-                    step_trace=step_trace,
-                    messages=messages,
-                )
-
-            self.trace.add_step(step_trace)
-
-        error_message = "The agent reached the maximum number of steps before producing a final answer."
-
-        return self._fail_run(
-            error=error_message,
-            stop_reason="max_steps_reached",
-        )
+                if stagnation_decision.should_recover:
+                    self._apply_stagnation_recovery(
+                        decision=stagnation_decision,
+                        step_trace=step_trace,
+                        messages=messages,
+                    )
 
     def execute_tool(self, tool_call) -> tuple[dict, ToolTrace]:
         name = tool_call.function.name

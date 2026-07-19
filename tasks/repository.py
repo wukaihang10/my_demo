@@ -1,8 +1,9 @@
 from typing import Any
 
-from agent.state import RepositoryState
+from tasks.repository_state import RepositoryState
 from agent.task import TaskProfile
-from tools.registry import TOOLS
+from tools.base import Tool
+from tools.registry import TOOL_MAP
 
 REPOSITORY_SYSTEM_PROMPT = """
 You are a GitHub repository analysis agent.
@@ -22,6 +23,14 @@ Rules:
 9. If a tool fails, inspect the error and try a reasonable alternative.
 10. Only give the final answer after gathering enough evidence.
 """.strip()
+
+REPOSITORY_TOOL_NAMES = (
+    "clone_repository",
+    "summarize_repository",
+    "list_files",
+    "read_file",
+    "search_code",
+)
 
 
 def create_repository_state(
@@ -152,10 +161,27 @@ def build_repository_context(
     return "\n".join(lines)
 
 
+def _build_repository_tools() -> tuple[Tool, ...]:
+    missing_tools = [
+        tool_name for tool_name in REPOSITORY_TOOL_NAMES if tool_name not in TOOL_MAP
+    ]
+
+    if missing_tools:
+        missing_text = ", ".join(missing_tools)
+
+        raise RuntimeError(
+            "Repository task references unregistered tools: " f"{missing_text}"
+        )
+
+    return tuple(TOOL_MAP[tool_name] for tool_name in REPOSITORY_TOOL_NAMES)
+
+
+REPOSITORY_TOOLS = _build_repository_tools()
+
 REPOSITORY_TASK = TaskProfile[RepositoryState](
     name="repository_analysis",
     system_prompt=REPOSITORY_SYSTEM_PROMPT,
-    tools=tuple(TOOLS),
+    tools=REPOSITORY_TOOLS,
     create_state=create_repository_state,
     reduce_tool_result=reduce_repository_tool_result,
     build_context=build_repository_context,

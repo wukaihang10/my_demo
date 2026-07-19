@@ -1,9 +1,14 @@
-from agent.agent import Agent
 from typing import Any
+
+from agent.agent import Agent
+from tasks.repository import REPOSITORY_TASK
+from agent.config import AgentConfig, PlanningMode
 
 
 def analyze_repository(repo_url: str) -> dict[str, Any]:
-    agent = Agent()
+    agent = Agent(
+        task=REPOSITORY_TASK, config=AgentConfig(planning_mode=PlanningMode.STATIC)
+    )
 
     task = f"""
 Analyze the following GitHub repository:
