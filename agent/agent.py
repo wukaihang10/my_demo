@@ -34,6 +34,9 @@ class Agent:
         stagnation_policy: StagnationPolicy | None = None,
         config: AgentConfig | None = None,
     ):
+        self.config = config or AgentConfig()
+        self._validate_config()
+
         self.task = task
 
         self.tools = {tool.name: tool for tool in self.task.tools}
@@ -47,19 +50,40 @@ class Agent:
         )
         self.tool_history = ToolHistory()
 
-        self.planner = planner or LLMPlanner()
-        self.plan_evaluator = plan_evaluator or LLMPlanProgressEvaluator()
-        self.plan_update_policy = plan_update_policy or PlanUpdatePolicy()
-        self.plan_controller = PlanController(policy=self.plan_update_policy)
+        self.planner = planner
+        if self.planner is None and self._uses_planning():
+            self.planner = LLMPlanner()
 
-        self.final_answer_policy = final_answer_policy or FinalAnswerPolicy()
+        self.plan_evaluator = plan_evaluator
+        if self.plan_evaluator is None and self._uses_dynamic_planning():
+            self.plan_evaluator = LLMPlanProgressEvaluator()
 
-        self.stagnation_policy = stagnation_policy or StagnationPolicy()
-        self.stagnation_tracker = StagnationTracker()
+        self.plan_update_policy = plan_update_policy
+
+        if self.plan_update_policy is None and self._uses_dynamic_planning():
+            self.plan_update_policy = PlanUpdatePolicy()
+
+        self.plan_controller = None
+
+        if self._uses_dynamic_planning():
+            if self.plan_update_policy is None:
+                raise RuntimeError("Dynamic planning requires a plan update policy.")
+
+            self.plan_controller = PlanController(policy=self.plan_update_policy)
+
+        self.final_answer_policy = final_answer_policy
+        if self.final_answer_policy is None and self._uses_final_answer_guard():
+            self.final_answer_policy = FinalAnswerPolicy()
+
+        self.stagnation_policy = stagnation_policy
+        if self.stagnation_policy is None and self._uses_stagnation_recovery():
+            self.stagnation_policy = StagnationPolicy()
+
+        self.stagnation_tracker = None
+        if self._uses_stagnation_recovery():
+            self.stagnation_tracker = StagnationTracker()
 
         self.last_outcome: AgentRunOutcome | None = None
-
-        self.config = config or AgentConfig()
 
     def _preview(self, value, max_chars: int = 500) -> str:
         try:
@@ -122,6 +146,18 @@ class Agent:
         latest_evidence: list[dict[str, Any]],
     ) -> dict[str, Any] | None:
         plan = self.state.plan
+        if not self._uses_dynamic_planning():
+            return None
+
+        if self.plan_evaluator is None:
+            raise RuntimeError(
+                "Dynamic planning is enabled, but no plan evaluator is configured."
+            )
+
+        if self.plan_controller is None:
+            raise RuntimeError(
+                "Dynamic plannig is enabled, but no plan controller is configured."
+            )
 
         if plan is None:
             return None
@@ -194,6 +230,16 @@ class Agent:
         if not self._uses_stagnation_recovery():
             return None
 
+        if self.stagnation_tracker is None:
+            raise RuntimeError(
+                "Stagnation recovery is enabled, but no tracker is configured."
+            )
+
+        if self.stagnation_policy is None:
+            raise RuntimeError(
+                "Stagnation recovery is enabled, but no policy is configured."
+            )
+
         snapshot = self.stagnation_tracker.snapshot()
 
         decision = self.stagnation_policy.evaluate(snapshot)
@@ -264,6 +310,11 @@ class Agent:
         step_trace: StepTrace,
         messages: list[dict[str, Any]],
     ) -> None:
+        if self.stagnation_tracker is None:
+            raise RuntimeError(
+                "Cannot record stagnation recovery without a stagnation tracker."
+            )
+
         step_id = self._get_current_plan_step_id()
 
         self.stagnation_tracker.record_recovery(step_id)
@@ -395,11 +446,18 @@ class Agent:
 
         self.tool_history = ToolHistory()
 
-        self.plan_controller = PlanController(
-            policy=self.plan_update_policy,
-        )
+        self.plan_controller = None
+        if self._uses_dynamic_planning():
+            if self.plan_update_policy is None:
+                raise RuntimeError("Dynamic planning requires " "a plan update policy.")
 
-        self.stagnation_tracker = StagnationTracker()
+            self.plan_controller = PlanController(
+                policy=self.plan_update_policy,
+            )
+
+        self.stagnation_tracker = None
+        if self._uses_stagnation_recovery():
+            self.stagnation_tracker = StagnationTracker()
 
         self.last_outcome = None
 
@@ -409,9 +467,11 @@ class Agent:
     ) -> None:
         mode = self.config.planning_mode
 
-        if mode is PlanningMode.NONE:
+        if not self._uses_planning():
             self.state.plan = None
             return
+        if self.planner is None:
+            raise RuntimeError("Planning is enabled, but no planner is configured.")
 
         plan = self.planner.create_plan(user_input)
 
@@ -424,6 +484,9 @@ class Agent:
         plan.start()
         self.state.plan = plan
 
+    def _uses_planning(self) -> bool:
+        return self.config.planning_mode is not PlanningMode.NONE
+
     def _uses_dynamic_planning(self) -> bool:
         return self.config.planning_mode is PlanningMode.DYNAMIC
 
@@ -433,115 +496,112 @@ class Agent:
     def _uses_stagnation_recovery(self) -> bool:
         return self.config.enable_stagnation_recovery
 
-    def _run_iteration(
-        self,
-        *,
-        messages: list[dict[str, Any]],
-        step_index: int,
-        max_tool_calls: int,
-    ) -> str | None:
-        """
-        Execute one LLM iteration.
-
-        Return a final response string when the run should stop.
-        Return None when the agent should continue to the next iteration.
-        """
-        print(f"\n===== Step {step_index} =====")
-
-        step_trace = StepTrace(step=step_index)
-
-        state_context = build_state_context(
-            self.state,
-            self.task,
-            self.config.planning_mode,
-        )
-
-        request_messages = [*messages, {"role": "system", "content": state_context}]
-        try:
-            response = chat(
-                request_messages,
-                self.tool_schemas,
+    def _validate_config(self) -> None:
+        if self.config.enable_stagnation_recovery and not (
+            self._uses_dynamic_planning() or self._uses_final_answer_guard()
+        ):
+            raise ValueError(
+                "Stagnation recovery requires dynamic planning "
+                "or the final-answer guard to produce stagnation signals."
             )
 
-        except LLMClientError as error:
-            error_message = f"LLM request failed at step {step_index}: {error}"
+    def _handle_final_response(
+        self,
+        *,
+        candidate_response: str,
+        messages: list[dict[str, Any]],
+        step_trace: StepTrace,
+    ) -> str | None:
+        """
+        Handle an LLM response that contains no tool calls.
 
-            return self._fail_run(
-                error=error_message,
-                stop_reason="llm_error",
+        Return a final response string when the run should stop.
+        Return None when the response is rejected and execution should continue.
+        """
+        if not self._uses_final_answer_guard():
+            step_trace.final_response = candidate_response
+
+            return self._complete_run(
+                answer=candidate_response,
+                step_trace=step_trace,
+            )
+        if self.final_answer_policy is None:
+            raise RuntimeError(
+                "The final-answer guard is enabled, but no final-answer policy is configured."
+            )
+
+        decision = self.final_answer_policy.evaluate(
+            plan=self.state.plan,
+            tool_calls_used=self.trace.tool_calls_used,
+            response_content=candidate_response,
+        )
+
+        step_trace.final_answer_decision = decision.to_dict()
+
+        if decision.allowed:
+            step_trace.final_response = candidate_response
+
+            return self._complete_run(
+                answer=candidate_response,
                 step_trace=step_trace,
             )
 
-        if not response.tool_calls:
-            candidate_response = response.content or ""
-
-            if not self._uses_final_answer_guard():
-                step_trace.final_response = candidate_response
-
-                return self._complete_run(
-                    answer=candidate_response,
-                    step_trace=step_trace,
-                )
-
-            decision = self.final_answer_policy.evaluate(
-                plan=self.state.plan,
-                tool_calls_used=self.trace.tool_calls_used,
-                response_content=candidate_response,
-            )
-
-            step_trace.final_answer_decision = decision.to_dict()
-
-            if decision.allowed:
-                step_trace.final_response = candidate_response
-
-                return self._complete_run(
-                    answer=candidate_response,
-                    step_trace=step_trace,
-                )
-
-            if candidate_response.strip():
-                messages.append(
-                    {
-                        "role": "assistant",
-                        "content": candidate_response,
-                    }
-                )
-
+        if candidate_response.strip():
             messages.append(
                 {
-                    "role": "system",
-                    "content": (
-                        self._build_final_answer_rejection_message(decision.reason)
-                    ),
+                    "role": "assistant",
+                    "content": candidate_response,
                 }
             )
 
-            if self._uses_stagnation_recovery():
-                self.stagnation_tracker.record_final_answer_rejection(
-                    self._get_current_plan_step_id()
+        messages.append(
+            {
+                "role": "system",
+                "content": (
+                    self._build_final_answer_rejection_message(decision.reason)
+                ),
+            }
+        )
+
+        if self._uses_stagnation_recovery():
+            self.stagnation_tracker.record_final_answer_rejection(
+                self._get_current_plan_step_id()
+            )
+
+            stagnation_decision = self._evaluate_stagnation(step_trace)
+
+            if stagnation_decision is not None and stagnation_decision.should_stop:
+                return self._stop_for_stagnation(
+                    decision=stagnation_decision,
+                    step_trace=step_trace,
                 )
 
-                stagnation_decision = self._evaluate_stagnation(step_trace)
+            if stagnation_decision is not None and stagnation_decision.should_recover:
+                self._apply_stagnation_recovery(
+                    decision=stagnation_decision,
+                    step_trace=step_trace,
+                    messages=messages,
+                )
 
-                assert stagnation_decision is not None
+        self.trace.add_step(step_trace)
 
-                if stagnation_decision.should_stop:
-                    return self._stop_for_stagnation(
-                        decision=stagnation_decision,
-                        step_trace=step_trace,
-                    )
+        return None
 
-                if stagnation_decision.should_recover:
-                    self._apply_stagnation_recovery(
-                        decision=stagnation_decision,
-                        step_trace=step_trace,
-                        messages=messages,
-                    )
+    def _handle_tool_calls(
+        self,
+        *,
+        response: Any,
+        messages: list[dict[str, Any]],
+        step_trace: StepTrace,
+        max_tool_calls: int,
+    ) -> str | None:
+        """
+        Execute and process one batch of tool calls.
 
-            self._add_step_trace_once(step_trace)
-            return None
+        Return a final response string when the run should stop.
+        Return None when execution should continue.
+        """
 
-        # 下面是工具调用循环
         messages.append(response.model_dump(exclude_none=True))
 
         latest_evidence: list[dict[str, Any]] = []
@@ -646,6 +706,62 @@ class Agent:
 
         self._add_step_trace_once(step_trace)
         return None
+
+    def _run_iteration(
+        self,
+        *,
+        messages: list[dict[str, Any]],
+        step_index: int,
+        max_tool_calls: int,
+    ) -> str | None:
+        """
+        Execute one LLM iteration.
+
+        Return a final response string when the run should stop.
+        Return None when the agent should continue to the next iteration.
+        """
+        print(f"\n===== Step {step_index} =====")
+
+        step_trace = StepTrace(step=step_index)
+
+        state_context = build_state_context(
+            self.state,
+            self.task,
+            self.config.planning_mode,
+        )
+
+        request_messages = [*messages, {"role": "system", "content": state_context}]
+        try:
+            response = chat(
+                request_messages,
+                self.tool_schemas,
+            )
+
+        except LLMClientError as error:
+            error_message = f"LLM request failed at step {step_index}: {error}"
+
+            return self._fail_run(
+                error=error_message,
+                stop_reason="llm_error",
+                step_trace=step_trace,
+            )
+
+        if not response.tool_calls:
+            candidate_response = response.content or ""
+
+            return self._handle_final_response(
+                candidate_response=candidate_response,
+                messages=messages,
+                step_trace=step_trace,
+            )
+
+        # 下面是工具调用循环
+        return self._handle_tool_calls(
+            response=response,
+            messages=messages,
+            step_trace=step_trace,
+            max_tool_calls=max_tool_calls,
+        )
 
     def run(
         self,
