@@ -4,12 +4,24 @@ import inspect
 from typing import Any
 
 from llm.client import chat, LLMClientError
-from tools.registry import TOOLS, TOOL_MAP
+from llm.messages import (
+    ChatMessage,
+    assistant_message,
+    assistant_tool_call_message,
+    system_message,
+    tool_result_message,
+    user_message,
+    serialize_tool_call,
+)
+
+from agent.run_context import RunContext
+
 from agent.trace import AgentTrace, StepTrace, ToolTrace
 from agent.observation import process_observation
-from agent.state import RepositoryState
+from agent.state import AgentState, RunStatus
+from agent.task import TaskProfile
 from agent.context import build_state_context
-from agent.history import ToolHistory
+from agent.tool_history import ToolHistory
 
 from agent.plan import PlanError
 from agent.planner import LLMPlanner, PlannerError
@@ -18,56 +30,87 @@ from agent.plan_update import PlanController, PlanUpdateError, PlanUpdatePolicy
 from agent.final_answer import FinalAnswerPolicy
 from agent.stagnation import StagnationDecision, StagnationPolicy, StagnationTracker
 from agent.outcome import AgentRunOutcome
-from agent.execution import ToolBatchResult
-
-TOOL_SCHEMAS = [tool.schema() for tool in TOOLS]
-
-SYSTEM_PROMPT = """
-You are a GitHub repository analysis agent.
-
-Use the available tools to inspect repositories and answer questions
-using evidence from actual repository files.
-
-Rules:
-
-1. Do not guess repository details.
-2. Clone a repository when needed.
-3. Use summarize_repository to obtain a high-level overview.
-4. Inspect the repository structure before selecting files.
-5. Read the README when it exists.
-6. Read relevant source and configuration files before explaining code.
-7. Use search_code when you do not know where something is implemented.
-8. Avoid reading every file.
-9. If a tool fails, inspect the error and try a reasonable alternative.
-10. Only give the final answer after gathering enough evidence.
-"""
+from agent.config import AgentConfig, PlanningMode
 
 
 class Agent:
+
     def __init__(
         self,
+        task: TaskProfile[Any],
         planner: LLMPlanner | None = None,
         plan_evaluator: LLMPlanProgressEvaluator | None = None,
         plan_update_policy: PlanUpdatePolicy | None = None,
         final_answer_policy: FinalAnswerPolicy | None = None,
         stagnation_policy: StagnationPolicy | None = None,
+        config: AgentConfig | None = None,
     ):
-        self.tools = TOOL_MAP
-        self.trace = AgentTrace()
-        self.state = RepositoryState()
-        self.tool_history = ToolHistory()
+        self.config = config or AgentConfig()
+        self._validate_config()
 
-        self.planner = planner or LLMPlanner()
-        self.plan_evaluator = plan_evaluator or LLMPlanProgressEvaluator()
-        self.plan_update_policy = plan_update_policy or PlanUpdatePolicy()
-        self.plan_controller = PlanController(policy=self.plan_update_policy)
+        self.task = task
 
-        self.final_answer_policy = final_answer_policy or FinalAnswerPolicy()
+        self.tools = {tool.name: tool for tool in self.task.tools}
 
-        self.stagnation_policy = stagnation_policy or StagnationPolicy()
-        self.stagnation_tracker = StagnationTracker()
+        self.tool_schemas = [tool.schema() for tool in self.task.tools]
 
-        self.last_outcome: AgentRunOutcome | None = None
+        self.planner = planner
+        if self.planner is None and self._uses_planning():
+            self.planner = LLMPlanner()
+
+        self.plan_evaluator = plan_evaluator
+        if self.plan_evaluator is None and self._uses_dynamic_planning():
+            self.plan_evaluator = LLMPlanProgressEvaluator()
+
+        self.plan_update_policy = plan_update_policy
+
+        if self.plan_update_policy is None and self._uses_dynamic_planning():
+            self.plan_update_policy = PlanUpdatePolicy()
+
+        self.plan_controller = None
+
+        if self._uses_dynamic_planning():
+            if self.plan_update_policy is None:
+                raise RuntimeError("Dynamic planning requires a plan update policy.")
+
+            self.plan_controller = PlanController(policy=self.plan_update_policy)
+
+        self.final_answer_policy = final_answer_policy
+        if self.final_answer_policy is None and self._uses_final_answer_guard():
+            self.final_answer_policy = FinalAnswerPolicy()
+
+        self.stagnation_policy = stagnation_policy
+        if self.stagnation_policy is None and self._uses_stagnation_recovery():
+            self.stagnation_policy = StagnationPolicy()
+
+        self._run_context: RunContext[Any] | None = None
+
+    @property
+    def state(self) -> AgentState[Any]:
+        return self._require_run_context().state
+
+    @property
+    def trace(self) -> AgentTrace:
+        return self._require_run_context().trace
+
+    @property
+    def tool_history(self) -> ToolHistory:
+        return self._require_run_context().tool_history
+
+    @property
+    def stagnation_tracker(
+        self,
+    ) -> StagnationTracker | None:
+        return self._require_run_context().stagnation_tracker
+
+    @property
+    def last_outcome(
+        self,
+    ) -> AgentRunOutcome | None:
+        if self._run_context is None:
+            return None
+
+        return self._run_context.outcome
 
     def _preview(self, value, max_chars: int = 500) -> str:
         try:
@@ -79,61 +122,6 @@ class Agent:
             return text
 
         return text[:max_chars] + "...[truncated]"
-
-    def _update_state(self, tool_name: str, arguments: dict, result) -> None:
-        if not isinstance(result, dict):
-            return
-
-        success = result.get("success", False)
-
-        if not success:
-            error = result.get("error", f"Tool failed: {tool_name}")
-
-            self.state.add_error(str(error))
-            return
-
-        if tool_name == "clone_repository":
-            repo_path = result.get("repo_path")
-
-            if repo_path:
-                self.state.repo_path = str(repo_path)
-
-            self.state.phase = "understanding"
-
-        elif tool_name == "summarize_repository":
-            important_files = result.get("important_files", [])
-
-            self.state.important_files = list(dict.fromkeys(important_files))
-
-            summary_fields = (
-                "repo_name",
-                "total_files",
-                "top_level_structure",
-                "languages",
-                "extensions",
-                "readme_path",
-            )
-
-            self.state.repository_summary = {
-                field: result.get(field) for field in summary_fields
-            }
-
-            self.state.phase = "reading_code"
-
-        elif tool_name == "list_files":
-            files = result.get("files", [])
-            for file_path in files:
-                self.state.add_list_file(file_path)
-
-        elif tool_name == "read_file":
-            file_path = result.get("file_path") or arguments.get("file_path")
-            if file_path:
-                self.state.add_read_file(str(file_path))
-
-        elif tool_name == "search_code":
-            keyword = result.get("keyword") or arguments.get("keyword")
-            if keyword:
-                self.state.add_search_keyword(str(keyword))
 
     def _finalize_tool_call(
         self,
@@ -168,10 +156,14 @@ class Agent:
             error=error_message,
         )
 
-        self._update_state(
-            tool_name=tool_name,
-            arguments=arguments,
-            result=normalized_result,
+        if not success and error_message is not None:
+            self.state.add_error(error_message)
+
+        self.task.reduce_tool_result(
+            self.state.task_state,
+            tool_name,
+            arguments,
+            normalized_result,
         )
 
         return normalized_result, trace
@@ -181,6 +173,18 @@ class Agent:
         latest_evidence: list[dict[str, Any]],
     ) -> dict[str, Any] | None:
         plan = self.state.plan
+        if not self._uses_dynamic_planning():
+            return None
+
+        if self.plan_evaluator is None:
+            raise RuntimeError(
+                "Dynamic planning is enabled, but no plan evaluator is configured."
+            )
+
+        if self.plan_controller is None:
+            raise RuntimeError(
+                "Dynamic planning is enabled, but no plan controller is configured."
+            )
 
         if plan is None:
             return None
@@ -250,6 +254,19 @@ class Agent:
         self,
         step_trace: StepTrace,
     ) -> StagnationDecision:
+        if not self._uses_stagnation_recovery():
+            return None
+
+        if self.stagnation_tracker is None:
+            raise RuntimeError(
+                "Stagnation recovery is enabled, but no tracker is configured."
+            )
+
+        if self.stagnation_policy is None:
+            raise RuntimeError(
+                "Stagnation recovery is enabled, but no policy is configured."
+            )
+
         snapshot = self.stagnation_tracker.snapshot()
 
         decision = self.stagnation_policy.evaluate(snapshot)
@@ -318,8 +335,13 @@ class Agent:
         *,
         decision: StagnationDecision,
         step_trace: StepTrace,
-        messages: list[dict[str, Any]],
     ) -> None:
+        messages = self._require_run_context().messages
+        if self.stagnation_tracker is None:
+            raise RuntimeError(
+                "Cannot record stagnation recovery without a stagnation tracker."
+            )
+
         step_id = self._get_current_plan_step_id()
 
         self.stagnation_tracker.record_recovery(step_id)
@@ -333,12 +355,7 @@ class Agent:
             recovery_attempt=recovery_attempt,
         )
 
-        messages.append(
-            {
-                "role": "system",
-                "content": recovery_message,
-            }
-        )
+        messages.append(system_message(recovery_message))
 
         if step_trace.stagnation is None:
             step_trace.stagnation = {}
@@ -368,26 +385,33 @@ class Agent:
         outcome: AgentRunOutcome,
         step_trace: StepTrace | None = None,
     ) -> str:
+        run_context = self._require_run_context()
+
+        if run_context.is_finished:
+            raise RuntimeError("The current agent run has already been finalized.")
+
         self._add_step_trace_once(step_trace)
 
-        self.last_outcome = outcome
+        run_context.outcome = outcome
 
         plan = self.state.plan
 
         if outcome.success:
-            self.state.plan = "completed"
+            self.state.status = RunStatus.COMPLETED
 
-            if plan is not None and plan.status == "failed":
-                raise RuntimeError(
-                    "A run cannot complete successfully while its plan is failed."
-                )
+            if plan is not None:
+                if plan.status == "failed":
+                    raise RuntimeError(
+                        "A run cannot complete successfully "
+                        "while its plan is failed."
+                    )
 
-            plan.finish(result=outcome.answer)
+                plan.finish(result=outcome.answer)
 
         else:
             assert outcome.error is not None
 
-            self.state.phase = "failed"
+            self.state.status = RunStatus.FAILED
             self.state.add_error(outcome.error)
 
             if step_trace is not None:
@@ -397,7 +421,7 @@ class Agent:
             if plan is not None and plan.status == "in_progress":
                 plan.fail(outcome.error)
 
-        self.trace.finish(outcome.step_reason)
+        self.trace.finish()
 
         return outcome.response
 
@@ -431,227 +455,251 @@ class Agent:
             step_trace=step_trace,
         )
 
-    def _reset_run_state(
+    def _start_run(
         self,
         *,
-        repo_url: str | None,
+        user_input: str,
+        task_input: dict[str, Any],
         max_steps: int,
         max_tool_calls: int,
     ) -> None:
-        self.trace = AgentTrace(
+        task_state = self.task.create_state(task_input)
+
+        state = AgentState(
+            task_state=task_state,
+        )
+
+        trace = AgentTrace(
             max_steps=max_steps,
             max_tool_calls=max_tool_calls,
         )
 
-        self.state = RepositoryState(
-            repo_url=repo_url,
-        )
-
-        self.tool_history = ToolHistory()
-
-        self.plan_controller = PlanController(
-            policy=self.plan_update_policy,
-        )
-
-        self.stagnation_tracker = StagnationTracker()
-        self.last_outcome = None
-
-    def run(
-        self,
-        user_input: str,
-        max_steps: int = 10,
-        max_tool_calls: int = 30,
-        repo_url: str | None = None,
-    ) -> str:
-        self._reset_run_state(
-            repo_url=repo_url, max_steps=max_steps, max_tool_calls=max_tool_calls
-        )
-
-        if max_steps <= 0:
-            error_message = "max_steps must be greater than zero."
-
-            return self._fail_run(
-                error=error_message,
-                stop_reason="invalid_configuration",
-            )
-
-        if max_tool_calls <= 0:
-            error_message = "max_tool_calls must be greater than zero."
-
-            return self._fail_run(
-                error=error_message,
-                stop_reason="invalid_configuration",
-            )
-
-        try:
-            plan = self.planner.create_plan(user_input)
-
-            if len(plan.steps) > self.plan_update_policy.max_total_steps:
-                # 默认配置下这个条件不会触发，Planner最多6步，PlanUpdatePolicy最多10步
-                raise PlannerError(
-                    f"The initial plan contains {len(plan.steps)} steps, but the runtime plan limit is {self.plan_update_policy.max_total_steps}"
-                )
-
-            plan.start()
-            self.state.plan = plan
-        except PlannerError as error:
-            return self._fail_run(
-                error=f"Planning failed: {error}",
-                stop_reason="planning_failed",
-            )
-
-        messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": user_input},
+        messages: list[ChatMessage] = [
+            system_message(self.task.system_prompt),
+            user_message(user_input),
         ]
 
-        for step_number in range(1, max_steps + 1):
-            print(f"\n===== Step {step_number} =====")
+        stagnation_tracker = None
 
-            step_trace = StepTrace(step=step_number)
+        if self._uses_stagnation_recovery():
+            stagnation_tracker = StagnationTracker()
 
-            state_context = build_state_context(self.state)
+        self._run_context = RunContext(
+            user_input=user_input,
+            task_input=dict(task_input),
+            state=state,
+            trace=trace,
+            messages=messages,
+            tool_history=ToolHistory(),
+            stagnation_tracker=(stagnation_tracker),
+        )
 
-            request_messages = [*messages, {"role": "system", "content": state_context}]
-            try:
-                response = chat(request_messages, TOOL_SCHEMAS)
-            except LLMClientError as error:
-                error_message = f"LLM request failed at step {step_number}: {error}"
+    def _initialize_plan(
+        self,
+        user_input: str,
+    ) -> None:
+        if not self._uses_planning():
+            self.state.plan = None
+            return
+        if self.planner is None:
+            raise RuntimeError("Planning is enabled, but no planner is configured.")
 
-                return self._fail_run(
-                    error=error_message,
-                    stop_reason="llm_error",
+        plan = self.planner.create_plan(user_input)
+
+        plan.start()
+        self.state.plan = plan
+
+    def _uses_planning(self) -> bool:
+        return self.config.planning_mode is not PlanningMode.NONE
+
+    def _uses_dynamic_planning(self) -> bool:
+        return self.config.planning_mode is PlanningMode.DYNAMIC
+
+    def _uses_final_answer_guard(self) -> bool:
+        return self.config.enable_final_answer_guard
+
+    def _uses_stagnation_recovery(self) -> bool:
+        return self.config.enable_stagnation_recovery
+
+    def _validate_config(self) -> None:
+        if self.config.enable_stagnation_recovery and not (
+            self._uses_dynamic_planning() or self._uses_final_answer_guard()
+        ):
+            raise ValueError(
+                "Stagnation recovery requires dynamic planning "
+                "or the final-answer guard to produce stagnation signals."
+            )
+
+    def _handle_final_response(
+        self,
+        *,
+        candidate_response: str,
+        step_trace: StepTrace,
+    ) -> str | None:
+        """
+        Handle an LLM response that contains no tool calls.
+
+        Return a final response string when the run should stop.
+        Return None when the response is rejected and execution should continue.
+        """
+        messages = self._require_run_context().messages
+
+        if not self._uses_final_answer_guard():
+            step_trace.final_response = candidate_response
+
+            return self._complete_run(
+                answer=candidate_response,
+                step_trace=step_trace,
+            )
+        if self.final_answer_policy is None:
+            raise RuntimeError(
+                "The final-answer guard is enabled, but no final-answer policy is configured."
+            )
+
+        decision = self.final_answer_policy.evaluate(
+            plan=self.state.plan,
+            tool_calls_used=self.trace.tool_calls_used,
+            response_content=candidate_response,
+        )
+
+        step_trace.final_answer_decision = decision.to_dict()
+
+        if decision.allowed:
+            step_trace.final_response = candidate_response
+
+            return self._complete_run(
+                answer=candidate_response,
+                step_trace=step_trace,
+            )
+
+        if candidate_response.strip():
+            messages.append(assistant_message(candidate_response))
+
+        messages.append(
+            system_message(self._build_final_answer_rejection_message(decision.reason))
+        )
+
+        if self._uses_stagnation_recovery():
+            self.stagnation_tracker.record_final_answer_rejection(
+                self._get_current_plan_step_id()
+            )
+
+            stagnation_decision = self._evaluate_stagnation(step_trace)
+
+            if stagnation_decision is not None and stagnation_decision.should_stop:
+                return self._stop_for_stagnation(
+                    decision=stagnation_decision,
                     step_trace=step_trace,
                 )
 
-            if not response.tool_calls:
-                candidate_response = response.content or ""
-
-                decision = self.final_answer_policy.evaluate(
-                    plan=self.state.plan,
-                    tool_calls_used=self.trace.tool_calls_used,
-                    response_content=candidate_response,
+            if stagnation_decision is not None and stagnation_decision.should_recover:
+                self._apply_stagnation_recovery(
+                    decision=stagnation_decision,
+                    step_trace=step_trace,
                 )
 
-                step_trace.final_answer_decision = decision.to_dict()
+        self.trace.add_step(step_trace)
 
-                if decision.allowed:
-                    step_trace.final_response = candidate_response
+        return None
 
-                    return self._complete_run(
-                        answer=candidate_response,
-                        step_traaace=step_trace,
-                    )
+    def _handle_tool_calls(
+        self,
+        *,
+        response: Any,
+        step_trace: StepTrace,
+        max_tool_calls: int,
+    ) -> str | None:
+        """
+        Execute and process one batch of tool calls.
 
-                self.stagnation_tracker.record_final_answer_rejection(
-                    self._get_current_plan_step_id()
+        Return a final response string when the run should stop.
+        Return None when execution should continue.
+        """
+        messages = self._require_run_context().messages
+
+        serialized_tool_calls = [
+            serialize_tool_call(tool_call) for tool_call in response.tool_calls
+        ]
+
+        messages.append(
+            assistant_tool_call_message(
+                content=response.content,
+                tool_calls=serialized_tool_calls,
+            )
+        )
+
+        latest_evidence: list[dict[str, Any]] = []
+
+        for tool_call in response.tool_calls:
+            # 检查工具调用次数是否超了
+
+            if self.trace.tool_calls_used >= max_tool_calls:
+                error_message = "The agent reached the maximum number of allowed tool calls before producing a final answer."
+
+                return self._fail_run(
+                    error=error_message,
+                    stop_reason="tool_budget_exceeded",
+                    step_trace=step_trace,
                 )
 
-                stagnation_decision = self._evaluate_stagnation(step_trace)
+            self.trace.record_tool_call()
 
-                if stagnation_decision.should_stop:
-                    return self._stop_for_stagnation(
-                        decision=stagnation_decision,
-                        step_trace=step_trace,
-                    )
+            result, tool_trace = self.execute_tool(tool_call)
 
-                if candidate_response.strip():
+            step_trace.tool_calls.append(tool_trace)
 
-                    messages.append(
-                        {
-                            "role": "assistant",
-                            "content": candidate_response,
-                        }
-                    )
+            status = "success" if tool_trace.success else "failed"
 
-                messages.append(
-                    {
-                        "role": "system",
-                        "content": self._build_final_answer_rejection_message(
-                            decision.reason
-                        ),
-                    }
+            print(
+                f"Tool: {tool_trace.tool_name} "
+                f"[{status}] "
+                f"{tool_trace.duration_ms:.2f} ms"
+            )
+
+            latest_evidence.append(
+                {
+                    "tool_call_id": tool_call.id,
+                    "tool_name": tool_trace.tool_name,
+                    "arguments": tool_trace.arguments,
+                    "success": tool_trace.success,
+                    "result": result,
+                }
+            )
+
+            content = process_observation(result)
+
+            messages.append(
+                tool_result_message(
+                    tool_call_id=tool_call.id,
+                    tool_name=tool_trace.tool_name,
+                    result=content,
                 )
+            )
 
-                if stagnation_decision.should_recover:
-                    self._apply_stagnation_recovery(
-                        decision=stagnation_decision,
-                        step_trace=step_trace,
-                        messages=messages,
-                    )
+        step_id_before_evaluation = self._get_current_plan_step_id()
 
-                self.trace.add_step(step_trace)
-                continue
-
-            # 下面是工具调用循环
-            messages.append(response.model_dump(exclude_none=True))
-
-            latest_evidence: list[dict[str, Any]] = []
-
-            for tool_call in response.tool_calls:
-                # 检查工具调用次数是否超了
-
-                if self.trace.tool_calls_used >= max_tool_calls:
-                    error_message = "The agent reached the maximum number of allowed tool calls before producing a final answer."
-
-                    return self._fail_run(
-                        error=error_message,
-                        stop_reason="tool_budget_exceeded",
-                        step_trace=step_trace,
-                    )
-
-                self.trace.record_tool_call()
-
-                result, tool_trace = self.execute_tool(tool_call)
-
-                step_trace.tool_calls.append(tool_trace)
-
-                status = "success" if tool_trace.success else "failed"
-
-                print(
-                    f"Tool: {tool_trace.tool_name} "
-                    f"[{status}] "
-                    f"{tool_trace.duration_ms:.2f} ms"
-                )
-
-                latest_evidence.append(
-                    {
-                        "tool_call_id": tool_call.id,
-                        "tool_name": tool_trace.tool_name,
-                        "arguments": tool_trace.arguments,
-                        "success": tool_trace.success,
-                        "result": result,
-                    }
-                )
-
-                content = process_observation(result)
-
-                messages.append(
-                    {"role": "tool", "tool_call_id": tool_call.id, "content": content}
-                )
-
-            step_id_before_evaluation = self._get_current_plan_step_id()
-
+        if self._uses_dynamic_planning() and self._uses_stagnation_recovery():
             self.stagnation_tracker.record_tool_batch(step_id_before_evaluation)
 
+        if self._uses_dynamic_planning():
             step_trace.plan_update = self._evaluate_plan_progress(latest_evidence)
 
             plan_update_result = step_trace.plan_update
 
-            if plan_update_result is not None:
-                if plan_update_result.get("success") is False:
-                    self.stagnation_tracker.record_evaluation_error(
-                        self._get_current_plan_step_id()
-                    )
-
-                else:
-                    action = plan_update_result.get("action")
-
-                    if isinstance(action, str):
-                        self.stagnation_tracker.record_plan_update(
-                            action=action,
-                            current_step_id=self._get_current_plan_step_id(),
+            if self._uses_stagnation_recovery():
+                if plan_update_result is not None:
+                    if plan_update_result.get("success") is False:
+                        self.stagnation_tracker.record_evaluation_error(
+                            self._get_current_plan_step_id()
                         )
+                    else:
+                        action = plan_update_result.get("action")
+
+                        if isinstance(action, str):
+                            self.stagnation_tracker.record_plan_update(
+                                action=action,
+                                current_step_id=(self._get_current_plan_step_id()),
+                            )
 
             plan = self.state.plan
 
@@ -660,15 +708,16 @@ class Agent:
                     plan.error or "The task plan failed without an error message."
                 )
 
-                error_message = f"The task plan failed: {plan_error}"
-
                 return self._fail_run(
-                    error=error_message,
+                    error=f"The task plan failed: {plan_error}",
                     stop_reason="plan_failed",
                     step_trace=step_trace,
                 )
 
+        if self._uses_stagnation_recovery():
             stagnation_decision = self._evaluate_stagnation(step_trace)
+
+            assert stagnation_decision is not None
 
             if stagnation_decision.should_stop:
                 return self._stop_for_stagnation(
@@ -683,13 +732,132 @@ class Agent:
                     messages=messages,
                 )
 
-            self.trace.add_step(step_trace)
+        self._add_step_trace_once(step_trace)
+        return None
 
-        error_message = "The agent reached the maximum number of steps before producing a final answer."
+    def _run_iteration(
+        self,
+        *,
+        step_index: int,
+        max_tool_calls: int,
+    ) -> str | None:
+        """
+        Execute one LLM iteration.
+
+        Return a final response string when the run should stop.
+        Return None when the agent should continue to the next iteration.
+        """
+        run_context = self._require_run_context()
+
+        messages = run_context.messages
+
+        print(f"\n===== Step {step_index} =====")
+
+        step_trace = StepTrace(step=step_index)
+
+        state_context = build_state_context(
+            self.state,
+            self.task,
+            self.config.planning_mode,
+        )
+
+        request_messages = [
+            *messages,
+            system_message(state_context),
+        ]
+        try:
+            response = chat(
+                request_messages,
+                self.tool_schemas,
+            )
+
+        except LLMClientError as error:
+            error_message = f"LLM request failed at step {step_index}: {error}"
+
+            return self._fail_run(
+                error=error_message,
+                stop_reason="llm_error",
+                step_trace=step_trace,
+            )
+
+        if not response.tool_calls:
+            candidate_response = response.content or ""
+
+            return self._handle_final_response(
+                candidate_response=candidate_response,
+                step_trace=step_trace,
+            )
+
+        # 下面是工具调用循环
+        return self._handle_tool_calls(
+            response=response,
+            step_trace=step_trace,
+            max_tool_calls=max_tool_calls,
+        )
+
+    def _require_run_context(
+        self,
+    ) -> RunContext[Any]:
+        run_context = self._run_context
+
+        if run_context is None:
+            raise RuntimeError("No active agent run exists.")
+
+        return run_context
+
+    def run(
+        self,
+        user_input: str,
+        max_steps: int = 10,
+        max_tool_calls: int = 30,
+        task_input: dict[str, Any] | None = None,
+    ) -> str:
+        initial_task_input = dict(task_input or {})
+
+        self._start_run(
+            user_input=user_input,
+            task_input=initial_task_input,
+            max_steps=max_steps,
+            max_tool_calls=max_tool_calls,
+        )
+
+        if max_steps <= 0:
+            error_message = "max_steps must be greater than zero."
+
+            return self._fail_run(
+                error=error_message,
+                stop_reason="invalid_max_steps",
+            )
+
+        if max_tool_calls <= 0:
+            error_message = "max_tool_calls must be greater than zero."
+
+            return self._fail_run(
+                error=error_message,
+                stop_reason="invalid_max_tool_calls",
+            )
+
+        self.state.status = RunStatus.RUNNING
+
+        try:
+            self._initialize_plan(user_input)
+        except PlannerError as error:
+            return self._fail_run(
+                error=f"Planning failed: {error}",
+                stop_reason="planning_failed",
+            )
+
+        for step_index in range(1, max_steps + 1):
+            final_response = self._run_iteration(
+                step_index=step_index, max_tool_calls=max_tool_calls
+            )
+
+            if final_response is not None:
+                return final_response
 
         return self._fail_run(
-            error=error_message,
-            stop_reason="max_steps_reached",
+            error=f"Agent reached the maximum number of steps: {max_steps}.",
+            stop_reason="max_steps_exceeded",
         )
 
     def execute_tool(self, tool_call) -> tuple[dict, ToolTrace]:

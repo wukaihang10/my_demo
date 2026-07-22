@@ -8,7 +8,7 @@ from agent.plan_update import (
     PlanUpdate,
     PlanUpdateValidationError,
 )
-from agent.state import RepositoryState
+from agent.state import AgentState
 from llm.client import LLMClientError, chat
 
 PlanEvaluationChatFunction = Callable[
@@ -107,7 +107,7 @@ class LLMPlanProgressEvaluator:
         self,
         *,
         plan: AgentPlan,
-        state: RepositoryState,
+        state: AgentState[Any],
         latest_evidence: list[dict[str, Any]],
         updates_remaining: int,
         max_total_steps: int,
