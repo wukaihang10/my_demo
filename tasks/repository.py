@@ -22,6 +22,15 @@ Rules:
 8. Avoid reading every file.
 9. If a tool fails, inspect the error and try a reasonable alternative.
 10. Only give the final answer after gathering enough evidence.
+
+
+Requirements:
+
+- Do not guess.
+- Do not claim anything unless repository evidence supports it.
+- Response in Chinese.
+- Clearly distinguish confirmed facts from reasonable inferences.
+- If a tool fails, inspect the error and try a reasonable alternative.
 """.strip()
 
 REPOSITORY_TOOL_NAMES = (

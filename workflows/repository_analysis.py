@@ -15,16 +15,6 @@ Analyze the following GitHub repository:
 
 {repo_url}
 
-Follow this process:
-
-1. Clone the repository if it is not already available locally.
-2. Call summarize_repository to obtain a high-level overview.
-3. Use list_files only when you need a more detailed repository tree.
-4. Read the README if it exists.
-5. Read the most relevant source and configuration files.
-6. Use search_code when the location of an implementation is unclear.
-7. Do not read every file unless the repository is very small.
-8. Base every conclusion on repository evidence.
 
 Your final answer must include:
 
@@ -50,20 +40,24 @@ Your final answer must include:
    - How the important components work together
 
 6. Current capabilities
-   - What the project can currently do
+   - What the project can currently do, what is this project's features compared to the other same projects.
 
-7. Running instructions
+7. Teach users how to use this repository.
+
+8. Running instructions
    - How to install dependencies
    - How to start or test the project
 
-8. Limitations and uncertainties
+9. Limitations and uncertainties
    - Missing files or incomplete implementations
    - Anything that could not be confirmed
+
 
 Requirements:
 
 - Do not guess.
 - Do not claim anything unless repository evidence supports it.
+- Response in Chinese.
 - Clearly distinguish confirmed facts from reasonable inferences.
 - If a tool fails, inspect the error and try a reasonable alternative.
 """
@@ -71,6 +65,7 @@ Requirements:
     answer = agent.run(
         user_input=task,
         max_steps=15,
+        max_tool_calls=60,
         task_input={"repo_url": repo_url},
     )
 

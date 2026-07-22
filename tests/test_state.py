@@ -1,5 +1,6 @@
 from agent.plan import AgentPlan, PlanStepSpec
-from agent.state import AgentState, RepositoryState
+from agent.state import AgentState, RunStatus
+from tasks.repository_state import RepositoryState
 
 
 def make_test_plan(
@@ -26,6 +27,7 @@ def test_agent_state_has_no_plan_by_default() -> None:
     )
 
     assert state.plan is None
+    assert state.status is RunStatus.INITIAL
     assert state.to_dict()["plan"] is None
 
 

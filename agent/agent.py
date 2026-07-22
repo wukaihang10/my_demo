@@ -30,7 +30,6 @@ from agent.plan_update import PlanController, PlanUpdateError, PlanUpdatePolicy
 from agent.final_answer import FinalAnswerPolicy
 from agent.stagnation import StagnationDecision, StagnationPolicy, StagnationTracker
 from agent.outcome import AgentRunOutcome
-from agent.execution import ToolBatchResult
 from agent.config import AgentConfig, PlanningMode
 
 
@@ -597,7 +596,6 @@ class Agent:
                 self._apply_stagnation_recovery(
                     decision=stagnation_decision,
                     step_trace=step_trace,
-                    messages=messages,
                 )
 
         self.trace.add_step(step_trace)
@@ -674,7 +672,7 @@ class Agent:
                 tool_result_message(
                     tool_call_id=tool_call.id,
                     tool_name=tool_trace.tool_name,
-                    result=result,
+                    result=content,
                 )
             )
 
@@ -787,14 +785,12 @@ class Agent:
 
             return self._handle_final_response(
                 candidate_response=candidate_response,
-                messages=messages,
                 step_trace=step_trace,
             )
 
         # 下面是工具调用循环
         return self._handle_tool_calls(
             response=response,
-            messages=messages,
             step_trace=step_trace,
             max_tool_calls=max_tool_calls,
         )

@@ -1,1215 +1,120 @@
 import json
-from types import SimpleNamespace
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, Callable
+
+import pytest
 
 import agent.agent as agent_module
 from agent.agent import Agent
-from llm.client import LLMClientError
-from agent.plan import AgentPlan, PlanStepSpec
-from agent.plan_evaluator import PlanEvaluationError
-from agent.plan_update import (
-    PlanUpdate,
-    PlanUpdatePolicy,
-)
+from agent.config import AgentConfig, PlanningMode
 from agent.final_answer import FinalAnswerPolicy
-from agent.stagnation import StagnationPolicy
-
+from agent.outcome import AgentRunOutcome
+from agent.plan import AgentPlan, PlanStepSpec
+from agent.plan_update import PlanUpdate
+from agent.state import RunStatus
 from agent.task import TaskProfile
+from llm.client import LLMClientError
 from tools.base import Tool
 
 
+@dataclass
+class FakeFunction:
+    name: str
+    arguments: str
+
+
+@dataclass
+class FakeToolCall:
+    id: str
+    function: FakeFunction
+
+    def model_dump(self, exclude_none: bool = False) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "type": "function",
+            "function": {
+                "name": self.function.name,
+                "arguments": self.function.arguments,
+            },
+        }
+
+
+@dataclass
+class FakeMessage:
+    content: str | None = None
+    tool_calls: list[FakeToolCall] | None = None
+
+    def __post_init__(self) -> None:
+        if self.tool_calls is None:
+            self.tool_calls = []
+
+
 class FakePlanner:
-    def create_plan(
-        self,
-        goal: str,
-    ) -> AgentPlan:
+    def __init__(self) -> None:
+        self.goals: list[str] = []
+
+    def create_plan(self, goal: str) -> AgentPlan:
+        self.goals.append(goal)
         return AgentPlan.from_step_specs(
             goal=goal,
             step_specs=[
                 PlanStepSpec(
-                    description=("Gather enough evidence to answer " "the user."),
-                    completion_criteria=(
-                        "The required evidence has been " "collected."
-                    ),
+                    description="Collect the required evidence.",
+                    completion_criteria="Enough evidence has been collected.",
                 )
             ],
         )
 
 
 class FakePlanEvaluator:
-    def __init__(
-        self,
-        updates: list[PlanUpdate],
-    ) -> None:
+    def __init__(self, *updates: PlanUpdate) -> None:
         self._updates = iter(updates)
         self.calls: list[dict[str, Any]] = []
 
-    def evaluate_progress(
-        self,
-        **kwargs: Any,
-    ) -> PlanUpdate:
+    def evaluate_progress(self, **kwargs: Any) -> PlanUpdate:
         self.calls.append(kwargs)
-
         try:
             return next(self._updates)
         except StopIteration as error:
-            raise AssertionError(
-                "The plan evaluator was called more times " "than expected."
-            ) from error
-
-
-class UnexpectedPlanEvaluator:
-    def evaluate_progress(
-        self,
-        **kwargs: Any,
-    ) -> PlanUpdate:
-        raise AssertionError("The plan evaluator should not have been called.")
-
-
-class FakeMessage:
-    """A minimal replacement for an LLM assistance message."""
-
-    def __init__(
-        self, content: str | None = None, tool_calls: list[Any] | None = None
-    ) -> None:
-        self.content = content
-        self.tool_calls = tool_calls or []
-
-    def model_dump(self, exclude_none: bool = False) -> dict[str, Any]:
-        data: dict[str, Any] = {"role": "assistant", "content": self.content}
-
-        if self.tool_calls:
-            data["tool_calls"] = [
-                {
-                    "id": tool_call.id,
-                    "type": "function",
-                    "function": {
-                        "name": tool_call.function.name,
-                        "arguments": tool_call.function.arguments,
-                    },
-                }
-                for tool_call in self.tool_calls
-            ]
-
-        if exclude_none:
-            data = {key: value for key, value in data.items() if value is not None}
-
-        return data
-
-
-class FakeTool:
-    """A controllable tool used only by unit tests."""
-
-    def __init__(
-        self,
-        result: dict[str, Any],
-    ) -> None:
-        self.result = result
-        self.calls: list[dict[str, Any]] = []
-
-    def execute(self, **arguments: Any) -> dict[str, Any]:
-        self.calls.append(arguments)
-
-        return self.result
+            raise AssertionError("Unexpected plan evaluation.") from error
 
 
 def make_tool_call(
-    name: str,
-    arguments: dict[str, Any],
+    name: str = "store_value",
+    arguments: Any = None,
     call_id: str = "call_1",
-):
-    return SimpleNamespace(
+) -> FakeToolCall:
+    if arguments is None:
+        arguments = {"value": 42}
+
+    encoded_arguments = (
+        arguments if isinstance(arguments, str) else json.dumps(arguments)
+    )
+    return FakeToolCall(
         id=call_id,
-        function=SimpleNamespace(
-            name=name,
-            arguments=json.dumps(arguments),
-        ),
+        function=FakeFunction(name=name, arguments=encoded_arguments),
     )
 
 
-def test_run_returns_direct_final_answer(
-    monkeypatch,
-) -> None:
-    def fake_chat(messages, tools):
-        return FakeMessage(content="Repository analysis completed.")
+def make_task(
+    function: Callable[..., dict[str, Any]] | None = None,
+) -> TaskProfile[dict[str, Any]]:
+    def store_value(value: int) -> dict[str, Any]:
+        return {"success": True, "value": value}
 
-    monkeypatch.setattr(
-        agent_module,
-        "chat",
-        fake_chat,
-    )
-
-    agent = Agent(
-        planner=FakePlanner(),
-        plan_evaluator=UnexpectedPlanEvaluator(),
-    )
-
-    answer = agent.run(
-        user_input="Analyze the repository.",
-        max_steps=3,
-        max_tool_calls=3,
-        repo_url="https://github.com/example/demo",
-    )
-
-    assert answer == "Repository analysis completed."
-
-    assert agent.state.status == "completed"
-    assert agent.trace.status == "completed"
-
-    assert agent.trace.steps_used == 1
-    assert agent.trace.tool_calls_used == 0
-
-    assert len(agent.trace.steps) == 1
-    assert agent.trace.steps[0].final_response == "Repository analysis completed."
-
-    assert agent.state.plan is not None
-
-    assert agent.state.plan.status == "completed"
-    assert agent.state.plan.result == ("Repository analysis completed.")
-    assert all(step.status == "skipped" for step in agent.state.plan.steps)
-
-    step = agent.trace.steps[0]
-
-    assert step.final_answer_decision is not None
-    assert step.final_answer_decision["allowed"] is True
-    assert step.final_response == ("Repository analysis completed.")
-
-    assert agent.last_outcome is not None
-    assert agent.last_outcome.success is True
-    assert agent.last_outcome.answer == ("Repository analysis completed.")
-    assert agent.last_outcome.error is None
-    assert agent.last_outcome.stop_reason == "completed"
-
-
-def test_run_executes_tool_then_returns_answer(
-    monkeypatch,
-) -> None:
-    tool_call = make_tool_call(
-        name="fake_tool",
-        arguments={"value": 42},
-    )
-
-    responses = iter(
-        [
-            FakeMessage(
-                content=None,
-                tool_calls=[tool_call],
-            ),
-            FakeMessage(content="The tool returned the expected result."),
-        ]
-    )
-
-    received_messages: list[list[dict[str, Any]]] = []
-
-    def fake_chat(messages, tools):
-        received_messages.append(messages)
-
-        return next(responses)
-
-    monkeypatch.setattr(
-        agent_module,
-        "chat",
-        fake_chat,
-    )
-
-    fake_tool = FakeTool(
-        result={
-            "success": True,
-            "value": "tool result",
-        }
-    )
-
-    evaluator = FakePlanEvaluator(
-        updates=[
-            PlanUpdate.from_dict(
-                {
-                    "action": "complete_current_step",
-                    "result": ("The required tool evidence was collected."),
-                }
-            )
-        ]
-    )
-
-    agent = Agent(planner=FakePlanner(), plan_evaluator=evaluator)
-    agent.tools = {
-        "fake_tool": fake_tool,
-    }
-
-    answer = agent.run(
-        user_input="Use the fake tool.",
-        max_steps=3,
-        max_tool_calls=3,
-    )
-
-    assert fake_tool.calls == [{"value": 42}]
-
-    assert agent.trace.status == "completed"
-    assert agent.trace.steps_used == 2
-    assert agent.trace.tool_calls_used == 1
-
-    assert len(agent.trace.steps) == 2
-    assert len(agent.trace.steps[0].tool_calls) == 1
-
-    tool_trace = agent.trace.steps[0].tool_calls[0]
-
-    assert tool_trace.tool_name == "fake_tool"
-    assert tool_trace.success is True
-    assert tool_trace.arguments == {"value": 42}
-
-    second_request = received_messages[1]
-
-    tool_messages = [
-        message for message in second_request if message.get("role") == "tool"
-    ]
-
-    assert len(tool_messages) == 1
-
-    observation = json.loads(tool_messages[0]["content"])
-
-    assert observation["success"] is True
-    assert observation["value"] == "tool result"
-
-    assert len(evaluator.calls) == 1
-
-    evidence = evaluator.calls[0]["latest_evidence"]
-
-    assert len(evidence) == 1
-    assert evidence[0]["tool_name"] == "fake_tool"
-    assert evidence[0]["success"] is True
-    assert evidence[0]["result"]["value"] == ("tool result")
-
-    first_step = agent.trace.steps[0]
-
-    assert first_step.plan_update is not None
-    assert first_step.plan_update["success"] is True
-    assert first_step.plan_update["action"] == ("complete_current_step")
-
-    assert agent.state.plan is not None
-    assert agent.state.plan.status == "completed"
-    assert agent.state.plan.steps[0].status == "completed"
-    assert agent.state.plan.result == ("The tool returned the expected result.")
-
-
-def test_run_stops_when_tool_budget_is_exhausted(
-    monkeypatch,
-) -> None:
-    first_call = make_tool_call(
-        name="fake_tool",
-        arguments={"value": 1},
-        call_id="call_1",
-    )
-
-    second_call = make_tool_call(
-        name="fake_tool",
-        arguments={"value": 2},
-        call_id="call_2",
-    )
-
-    def fake_chat(messages, tools):
-        return FakeMessage(
-            tool_calls=[
-                first_call,
-                second_call,
-            ]
-        )
-
-    monkeypatch.setattr(
-        agent_module,
-        "chat",
-        fake_chat,
-    )
-
-    fake_tool = FakeTool(
-        result={
-            "success": True,
-            "value": "ok",
-        }
-    )
-
-    agent = Agent(planner=FakePlanner(), plan_evaluator=UnexpectedPlanEvaluator())
-    agent.tools = {
-        "fake_tool": fake_tool,
-    }
-
-    answer = agent.run(
-        user_input="Call tools.",
-        max_steps=3,
-        max_tool_calls=1,
-    )
-
-    assert "tool" in answer.lower()
-
-    assert agent.trace.status == ("tool_budget_exceeded")
-
-    assert agent.trace.tool_calls_used == 1
-
-    trace_data = agent.trace.to_dict()
-    assert trace_data["tool_calls_remaining"] == 0
-
-    # Only the first tool is allowed to execute.
-    assert fake_tool.calls == [{"value": 1}]
-
-    assert len(agent.trace.steps) == 1
-    assert len(agent.trace.steps[0].tool_calls) == 1
-
-    assert agent.state.status == "failed"
-    assert agent.state.plan is not None
-    assert agent.state.plan.status == "failed"
-    assert agent.state.plan.current_step is not None
-    assert agent.state.plan.current_step.status == "failed"
-
-    assert len(agent.state.errors) == 1
-
-
-def test_run_records_llm_error(
-    monkeypatch,
-) -> None:
-    def fake_chat(messages, tools):
-        raise LLMClientError("simulated connection failure")
-
-    monkeypatch.setattr(
-        agent_module,
-        "chat",
-        fake_chat,
-    )
-
-    agent = Agent(planner=FakePlanner(), plan_evaluator=UnexpectedPlanEvaluator())
-
-    answer = agent.run(
-        user_input="Analyze repository.",
-        max_steps=3,
-        max_tool_calls=3,
-    )
-
-    assert "failed" in answer.lower()
-
-    assert agent.state.status == "failed"
-    assert agent.trace.status == "llm_error"
-
-    assert agent.trace.steps_used == 1
-    assert agent.trace.tool_calls_used == 0
-
-    assert len(agent.state.errors) == 1
-    assert "simulated connection failure" in (agent.state.errors[0])
-
-    step = agent.trace.steps[0]
-
-    assert step.error is not None
-    assert "simulated connection failure" in (step.error)
-
-    assert agent.state.plan is not None
-    assert agent.state.plan.status == "failed"
-    assert agent.state.plan.current_step is not None
-    assert agent.state.plan.current_step.status == "failed"
-
-    assert "simulated connection failure" in (agent.state.plan.current_step.error or "")
-
-
-def test_run_rejects_invalid_max_steps() -> None:
-    agent = Agent()
-
-    answer = agent.run(
-        user_input="Analyze repository.",
-        max_steps=0,
-        max_tool_calls=3,
-    )
-
-    assert answer == "max_steps must be greater than zero."
-
-    assert agent.trace.status == "invalid_max_steps"
-    assert agent.state.status == "failed"
-
-    assert agent.state.plan is None
-
-
-def test_run_rejects_invalid_tool_budget() -> None:
-    agent = Agent()
-
-    answer = agent.run(
-        user_input="Analyze repository.",
-        max_steps=3,
-        max_tool_calls=0,
-    )
-
-    assert answer == "max_tool_calls must be greater than zero."
-
-    assert agent.trace.status == "invalid_max_tool_calls"
-    assert agent.state.status == "failed"
-
-    assert agent.state.plan is None
-
-
-def test_run_evaluates_plan_once_per_tool_batch(
-    monkeypatch,
-) -> None:
-    first_call = make_tool_call(
-        name="fake_tool",
-        arguments={"value": 1},
-        call_id="call_1",
-    )
-    second_call = make_tool_call(
-        name="fake_tool",
-        arguments={"value": 2},
-        call_id="call_2",
-    )
-
-    responses = iter(
-        [
-            FakeMessage(
-                tool_calls=[
-                    first_call,
-                    second_call,
-                ]
-            ),
-            FakeMessage(content="Both results were collected."),
-        ]
-    )
-
-    def fake_chat(messages, tools):
-        return next(responses)
-
-    monkeypatch.setattr(
-        agent_module,
-        "chat",
-        fake_chat,
-    )
-
-    evaluator = FakePlanEvaluator(
-        updates=[
-            PlanUpdate.from_dict(
-                {
-                    "action": "complete_current_step",
-                    "result": ("Both tool calls completed."),
-                }
-            )
-        ]
-    )
-
-    fake_tool = FakeTool(
-        result={
-            "success": True,
-            "value": "ok",
-        }
-    )
-
-    agent = Agent(
-        planner=FakePlanner(),
-        plan_evaluator=evaluator,
-    )
-    agent.tools = {
-        "fake_tool": fake_tool,
-    }
-
-    answer = agent.run(
-        user_input="Call the tool twice.",
-        max_steps=3,
-        max_tool_calls=3,
-    )
-
-    assert answer == "Both results were collected."
-    assert fake_tool.calls == [
-        {"value": 1},
-        {"value": 2},
-    ]
-
-    assert len(evaluator.calls) == 1
-
-    evidence = evaluator.calls[0]["latest_evidence"]
-
-    assert len(evidence) == 2
-    assert evidence[0]["tool_call_id"] == "call_1"
-    assert evidence[1]["tool_call_id"] == "call_2"
-
-    assert agent.trace.steps[0].plan_update is not None
-    assert agent.trace.steps[0].plan_update["action"] == "complete_current_step"
-
-
-def test_plan_evaluation_error_is_nonfatal(
-    monkeypatch,
-) -> None:
-    tool_call = make_tool_call(
-        name="fake_tool",
-        arguments={"value": 42},
-    )
-
-    responses = iter(
-        [
-            FakeMessage(tool_calls=[tool_call]),
-            FakeMessage(content="The task still completed."),
-            FakeMessage(content="The task still completed."),
-        ]
-    )
-
-    def fake_chat(messages, tools):
-        return next(responses)
-
-    monkeypatch.setattr(
-        agent_module,
-        "chat",
-        fake_chat,
-    )
-
-    class ErrorEvaluator:
-        def evaluate_progress(
-            self,
-            **kwargs: Any,
-        ) -> PlanUpdate:
-            raise PlanEvaluationError("simulated invalid evaluator response")
-
-    fake_tool = FakeTool(
-        result={
-            "success": True,
-            "value": "ok",
-        }
-    )
-
-    agent = Agent(
-        planner=FakePlanner(),
-        plan_evaluator=ErrorEvaluator(),
-        stagnation_policy=StagnationPolicy(
-            max_recovery_attempts_per_step=0,
-        ),
-    )
-    agent.tools = {
-        "fake_tool": fake_tool,
-    }
-
-    answer = agent.run(
-        user_input="Use the tool.",
-        max_steps=3,
-        max_tool_calls=3,
-    )
-
-    assert (
-        answer
-        == "Agent execution stagnated: The executor repeatedly proposed a final answer while the task plan was incomplete. The recovery allowance for the current plan step has been exhausted."
-    )
-    assert agent.state.status == "failed"
-    assert agent.trace.status == "stagnation_rejected_answers"
-
-    assert any(
-        "Plan progress evaluation failed" in error for error in agent.state.errors
-    )
-
-    update_trace = agent.trace.steps[0].plan_update
-
-    assert update_trace is not None
-    assert update_trace["success"] is False
-    assert "simulated invalid evaluator response" in update_trace["error"]
-
-
-def test_failed_plan_stops_agent_after_tool_batch(
-    monkeypatch,
-) -> None:
-    tool_call = make_tool_call(
-        name="fake_tool",
-        arguments={"value": 42},
-    )
-
-    executor_call_count = 0
-
-    def fake_chat(messages, tools):
-        nonlocal executor_call_count
-        executor_call_count += 1
-
-        return FakeMessage(tool_calls=[tool_call])
-
-    monkeypatch.setattr(
-        agent_module,
-        "chat",
-        fake_chat,
-    )
-
-    evaluator = FakePlanEvaluator(
-        updates=[
-            PlanUpdate.from_dict(
-                {
-                    "action": "fail_current_step",
-                    "error": ("The required information is " "unavailable."),
-                }
-            )
-        ]
-    )
-
-    fake_tool = FakeTool(
-        result={
-            "success": False,
-            "error": "Repository is unavailable.",
-        }
-    )
-
-    agent = Agent(
-        planner=FakePlanner(),
-        plan_evaluator=evaluator,
-    )
-    agent.tools = {
-        "fake_tool": fake_tool,
-    }
-
-    answer = agent.run(
-        user_input="Inspect the unavailable repository.",
-        max_steps=3,
-        max_tool_calls=3,
-    )
-
-    assert "task plan failed" in answer.lower()
-    assert "required information is unavailable" in answer.lower()
-
-    assert executor_call_count == 1
-    assert agent.state.status == "failed"
-    assert agent.trace.status == "plan_failed"
-
-    assert agent.state.plan is not None
-    assert agent.state.plan.status == "failed"
-    assert agent.state.plan.current_step.status == "failed"
-
-
-def test_run_rejects_premature_final_answer_after_tool_use(
-    monkeypatch,
-) -> None:
-    first_tool_call = make_tool_call(
-        name="fake_tool",
-        arguments={"value": 1},
-        call_id="call_1",
-    )
-
-    second_tool_call = make_tool_call(
-        name="fake_tool",
-        arguments={"value": 2},
-        call_id="call_2",
-    )
-
-    responses = iter(
-        [
-            FakeMessage(
-                tool_calls=[first_tool_call],
-            ),
-            FakeMessage(
-                content=(
-                    "This answer is premature because " "the plan is not complete."
-                ),
-            ),
-            FakeMessage(
-                tool_calls=[second_tool_call],
-            ),
-            FakeMessage(
-                content="The final verified answer.",
-            ),
-        ]
-    )
-
-    received_messages: list[list[dict[str, Any]]] = []
-
-    def fake_chat(messages, tools):
-        received_messages.append(messages)
-        return next(responses)
-
-    monkeypatch.setattr(
-        agent_module,
-        "chat",
-        fake_chat,
-    )
-
-    evaluator = FakePlanEvaluator(
-        updates=[
-            PlanUpdate.from_dict(
-                {
-                    "action": "keep_current_step",
-                    "reason": ("More evidence is required."),
-                }
-            ),
-            PlanUpdate.from_dict(
-                {
-                    "action": ("complete_current_step"),
-                    "result": ("All required evidence was " "collected."),
-                }
-            ),
-        ]
-    )
-
-    fake_tool = FakeTool(
-        result={
-            "success": True,
-            "value": "tool result",
-        }
-    )
-
-    agent = Agent(
-        planner=FakePlanner(),
-        plan_evaluator=evaluator,
-    )
-    agent.tools = {
-        "fake_tool": fake_tool,
-    }
-
-    answer = agent.run(
-        user_input="Complete the tool-assisted task.",
-        max_steps=4,
-        max_tool_calls=3,
-    )
-
-    assert answer == "The final verified answer."
-
-    assert fake_tool.calls == [
-        {"value": 1},
-        {"value": 2},
-    ]
-
-    assert len(evaluator.calls) == 2
-    assert len(agent.trace.steps) == 4
-
-    rejected_step = agent.trace.steps[1]
-
-    assert rejected_step.final_answer_decision is not None
-    assert rejected_step.final_answer_decision["allowed"] is False
-    assert rejected_step.final_response is None
-
-    accepted_step = agent.trace.steps[3]
-
-    assert accepted_step.final_answer_decision is not None
-    assert accepted_step.final_answer_decision["allowed"] is True
-    assert accepted_step.final_response == ("The final verified answer.")
-
-    # The third executor request should contain
-    # feedback explaining that the previous answer
-    # was rejected.
-    third_request = received_messages[2]
-
-    rejection_messages = [
-        message
-        for message in third_request
-        if (
-            message.get("role") == "system"
-            and "not accepted as the final answer" in message.get("content", "")
-        )
-    ]
-
-    assert len(rejection_messages) == 1
-
-    assert agent.state.plan is not None
-    assert agent.state.plan.status == "completed"
-    assert agent.state.plan.result == ("The final verified answer.")
-
-
-def test_agent_can_disable_direct_final_answers(
-    monkeypatch,
-) -> None:
-    responses = iter(
-        [
-            FakeMessage(content="An unsupported direct answer."),
-            FakeMessage(content="Another unsupported answer."),
-        ]
-    )
-
-    def fake_chat(messages, tools):
-        return next(responses)
-
-    monkeypatch.setattr(
-        agent_module,
-        "chat",
-        fake_chat,
-    )
-
-    agent = Agent(
-        planner=FakePlanner(),
-        plan_evaluator=UnexpectedPlanEvaluator(),
-        final_answer_policy=FinalAnswerPolicy(
-            allow_direct_answer_before_tool_use=False,
-        ),
-        stagnation_policy=StagnationPolicy(
-            max_recovery_attempts_per_step=0,
-        ),
-    )
-
-    answer = agent.run(
-        user_input="Analyze an external repository.",
-        max_steps=2,
-        max_tool_calls=3,
-    )
-
-    assert "he executor repeatedly proposed a final answer" in answer.lower()
-    assert agent.trace.status == "stagnation_rejected_answers"
-
-    assert len(agent.trace.steps) == 2
-
-    assert all(
-        step.final_answer_decision is not None
-        and (step.final_answer_decision["allowed"] is False)
-        for step in agent.trace.steps
-    )
-
-
-def test_agent_recovers_once_then_stops_after_more_keeps(
-    monkeypatch,
-) -> None:
-    first_tool_call = make_tool_call(
-        name="fake_tool",
-        arguments={"value": 1},
-        call_id="call_1",
-    )
-
-    second_tool_call = make_tool_call(
-        name="fake_tool",
-        arguments={"value": 2},
-        call_id="call_2",
-    )
-
-    responses = iter(
-        [
-            FakeMessage(
-                tool_calls=[first_tool_call],
-            ),
-            FakeMessage(
-                tool_calls=[second_tool_call],
-            ),
-        ]
-    )
-
-    received_messages: list[list[dict[str, Any]]] = []
-
-    def fake_chat(messages, tools):
-        received_messages.append(messages)
-        return next(responses)
-
-    monkeypatch.setattr(
-        agent_module,
-        "chat",
-        fake_chat,
-    )
-
-    evaluator = FakePlanEvaluator(
-        updates=[
-            PlanUpdate.from_dict(
-                {
-                    "action": "keep_current_step",
-                    "reason": "More evidence is needed.",
-                }
-            ),
-            PlanUpdate.from_dict(
-                {
-                    "action": "keep_current_step",
-                    "reason": "Still not enough evidence.",
-                }
-            ),
-        ]
-    )
-
-    fake_tool = FakeTool(
-        result={
-            "success": True,
-            "value": "ok",
-        }
-    )
-
-    agent = Agent(
-        planner=FakePlanner(),
-        plan_evaluator=evaluator,
-        stagnation_policy=StagnationPolicy(
-            max_consecutive_keeps=1,
-            max_attempts_per_step=10,
-            max_recovery_attempts_per_step=1,
-        ),
-    )
-
-    agent.tools = {
-        "fake_tool": fake_tool,
-    }
-
-    result = agent.run(
-        user_input="Complete the task.",
-        max_steps=10,
-        max_tool_calls=10,
-    )
-
-    assert "execution stagnated" in result.lower()
-
-    assert fake_tool.calls == [
-        {"value": 1},
-        {"value": 2},
-    ]
-
-    assert agent.trace.status == ("stagnation_consecutive_keeps")
-
-    first_trace = agent.trace.steps[0]
-
-    assert first_trace.stagnation is not None
-    assert first_trace.stagnation["decision"]["should_recover"] is True
-    assert first_trace.stagnation["recovery"]["applied"] is True
-    assert first_trace.stagnation["recovery"]["attempt"] == 1
-
-    second_request = received_messages[1]
-
-    recovery_messages = [
-        message
-        for message in second_request
-        if (
-            message.get("role") == "system"
-            and "Change the execution strategy materially" in message.get("content", "")
-        )
-    ]
-
-    assert len(recovery_messages) == 1
-
-    second_trace = agent.trace.steps[1]
-
-    assert second_trace.stagnation is not None
-    assert second_trace.stagnation["decision"]["should_stop"] is True
-
-
-def test_agent_stops_after_repeated_premature_answers(
-    monkeypatch,
-) -> None:
-    tool_call = make_tool_call(
-        name="fake_tool",
-        arguments={"value": 1},
-        call_id="call_1",
-    )
-
-    responses = iter(
-        [
-            FakeMessage(tool_calls=[tool_call]),
-            FakeMessage(content="Premature answer one."),
-            FakeMessage(content="Premature answer two."),
-        ]
-    )
-
-    def fake_chat(messages, tools):
-        return next(responses)
-
-    monkeypatch.setattr(
-        agent_module,
-        "chat",
-        fake_chat,
-    )
-
-    evaluator = FakePlanEvaluator(
-        updates=[
-            PlanUpdate.from_dict(
-                {
-                    "action": "keep_current_step",
-                    "reason": "More evidence is required.",
-                }
-            )
-        ]
-    )
-
-    agent = Agent(
-        planner=FakePlanner(),
-        plan_evaluator=evaluator,
-        stagnation_policy=StagnationPolicy(
-            max_consecutive_rejected_final_answers=2,
-            max_consecutive_keeps=10,
-            max_attempts_per_step=10,
-            max_recovery_attempts_per_step=0,
-        ),
-    )
-
-    agent.tools = {
-        "fake_tool": FakeTool(
-            result={
-                "success": True,
-                "value": "partial evidence",
-            }
-        )
-    }
-
-    result = agent.run(
-        user_input="Complete the task.",
-        max_steps=10,
-        max_tool_calls=10,
-    )
-
-    assert "execution stagnated" in result.lower()
-    assert agent.trace.status == ("stagnation_rejected_answers")
-
-    assert len(agent.trace.steps) == 3
-
-    final_trace = agent.trace.steps[-1]
-
-    assert final_trace.final_answer_decision is not None
-    assert final_trace.final_answer_decision["allowed"] is False
-
-    assert final_trace.stagnation is not None
-    assert final_trace.stagnation["snapshot"]["consecutive_rejected_final_answers"] == 2
-
-
-def test_agent_recovers_from_stagnation_and_completes(
-    monkeypatch,
-) -> None:
-    first_tool_call = make_tool_call(
-        name="fake_tool",
-        arguments={"value": 1},
-        call_id="call_1",
-    )
-
-    second_tool_call = make_tool_call(
-        name="fake_tool",
-        arguments={"value": 2},
-        call_id="call_2",
-    )
-
-    responses = iter(
-        [
-            FakeMessage(
-                tool_calls=[first_tool_call],
-            ),
-            FakeMessage(
-                tool_calls=[second_tool_call],
-            ),
-            FakeMessage(content="The recovered task completed."),
-        ]
-    )
-
-    received_messages: list[list[dict[str, Any]]] = []
-
-    def fake_chat(messages, tools):
-        received_messages.append(messages)
-        return next(responses)
-
-    monkeypatch.setattr(
-        agent_module,
-        "chat",
-        fake_chat,
-    )
-
-    evaluator = FakePlanEvaluator(
-        updates=[
-            PlanUpdate.from_dict(
-                {
-                    "action": "keep_current_step",
-                    "reason": (
-                        "The first strategy did not provide " "enough evidence."
-                    ),
-                }
-            ),
-            PlanUpdate.from_dict(
-                {
-                    "action": "complete_current_step",
-                    "result": (
-                        "The alternative strategy provided " "the required evidence."
-                    ),
-                }
-            ),
-        ]
-    )
-
-    fake_tool = FakeTool(
-        result={
-            "success": True,
-            "value": "evidence",
-        }
-    )
-
-    agent = Agent(
-        planner=FakePlanner(),
-        plan_evaluator=evaluator,
-        stagnation_policy=StagnationPolicy(
-            max_consecutive_keeps=1,
-            max_attempts_per_step=10,
-            max_recovery_attempts_per_step=1,
-        ),
-    )
-
-    agent.tools = {
-        "fake_tool": fake_tool,
-    }
-
-    result = agent.run(
-        user_input="Complete the task.",
-        max_steps=5,
-        max_tool_calls=5,
-    )
-
-    assert result == "The recovered task completed."
-
-    assert fake_tool.calls == [
-        {"value": 1},
-        {"value": 2},
-    ]
-
-    assert agent.state.status == "completed"
-    assert agent.trace.status == "completed"
-
-    assert agent.state.plan is not None
-    assert agent.state.plan.status == "completed"
-    assert agent.state.plan.result == ("The recovered task completed.")
-
-    first_trace = agent.trace.steps[0]
-
-    assert first_trace.stagnation is not None
-    assert first_trace.stagnation["decision"]["should_recover"] is True
-
-    second_trace = agent.trace.steps[1]
-
-    assert second_trace.plan_update is not None
-    assert second_trace.plan_update["action"] == "complete_current_step"
-
-    second_request = received_messages[1]
-
-    assert any(
-        message.get("role") == "system"
-        and "different tool, different arguments" in message.get("content", "")
-        for message in second_request
-    )
-
-
-def test_agent_delegates_task_specific_behavior(
-    monkeypatch,
-) -> None:
-    received_requests: list[tuple[list[dict[str, Any]], list[dict[str, Any]]]] = []
-
-    tool_call = make_tool_call(
-        name="store_value",
-        arguments={"value": 42},
-    )
-
-    responses = iter(
-        [
-            FakeMessage(tool_calls=[tool_call]),
-            FakeMessage(content="Custom task completed."),
-        ]
-    )
-
-    def fake_chat(messages, tools):
-        received_requests.append((messages, tools))
-        return next(responses)
-
-    monkeypatch.setattr(
-        agent_module,
-        "chat",
-        fake_chat,
-    )
-
-    def store_value(
-        value: int,
-    ) -> dict[str, Any]:
-        return {
-            "success": True,
-            "value": value,
-        }
-
-    custom_tool = Tool(
+    tool = Tool(
         name="store_value",
         description="Store one value.",
-        function=store_value,
+        function=function or store_value,
         parameters={
             "type": "object",
-            "properties": {
-                "value": {
-                    "type": "integer",
-                }
-            },
+            "properties": {"value": {"type": "integer"}},
             "required": ["value"],
         },
     )
 
-    def create_state(
-        input_data: dict[str, Any],
-    ) -> dict[str, Any]:
-        return {
-            "label": input_data.get("label"),
-            "values": [],
-        }
+    def create_state(input_data: dict[str, Any]) -> dict[str, Any]:
+        return {"label": input_data.get("label"), "values": []}
 
     def reduce_tool_result(
         state: dict[str, Any],
@@ -1220,73 +125,414 @@ def test_agent_delegates_task_specific_behavior(
         if tool_name == "store_value" and result.get("success") is True:
             state["values"].append(result["value"])
 
-    def build_context(
-        state: dict[str, Any],
-    ) -> str:
-        return f"Label: {state['label']}\n" f"Stored values: {state['values']}"
+    def build_context(state: dict[str, Any]) -> str:
+        return f"Label: {state['label']}\nStored values: {state['values']}"
 
-    task = TaskProfile[dict[str, Any]](
-        name="custom_task",
-        system_prompt=("You are executing a custom test task."),
-        tools=(custom_tool,),
+    return TaskProfile(
+        name="value_store",
+        system_prompt="You store values for tests.",
+        tools=(tool,),
         create_state=create_state,
         reduce_tool_result=reduce_tool_result,
         build_context=build_context,
     )
 
-    evaluator = FakePlanEvaluator(
-        updates=[
-            PlanUpdate.from_dict(
-                {
-                    "action": ("complete_current_step"),
-                    "result": ("The value was stored."),
-                }
-            )
-        ]
+
+def install_responses(
+    monkeypatch: pytest.MonkeyPatch,
+    *responses: FakeMessage,
+) -> list[tuple[list[dict[str, Any]], list[dict[str, Any]]]]:
+    response_iterator = iter(responses)
+    requests: list[tuple[list[dict[str, Any]], list[dict[str, Any]]]] = []
+
+    def fake_chat(messages, tools):
+        requests.append((messages, tools))
+        try:
+            return next(response_iterator)
+        except StopIteration as error:
+            raise AssertionError("Unexpected LLM request.") from error
+
+    monkeypatch.setattr(agent_module, "chat", fake_chat)
+    return requests
+
+
+def test_runtime_properties_require_an_active_run() -> None:
+    agent = Agent(task=make_task(), config=AgentConfig(planning_mode=PlanningMode.NONE))
+
+    assert agent.last_outcome is None
+    with pytest.raises(RuntimeError, match="No active agent run"):
+        _ = agent.state
+    with pytest.raises(RuntimeError, match="No active agent run"):
+        _ = agent.trace
+
+
+def test_constructor_initializes_only_enabled_capabilities() -> None:
+    direct_agent = Agent(
+        task=make_task(),
+        config=AgentConfig(planning_mode=PlanningMode.NONE),
     )
 
+    assert direct_agent.planner is None
+    assert direct_agent.plan_evaluator is None
+    assert direct_agent.plan_controller is None
+    assert direct_agent.final_answer_policy is None
+    assert direct_agent.stagnation_policy is None
+
+    dynamic_agent = Agent(
+        task=make_task(),
+        config=AgentConfig(
+            planning_mode=PlanningMode.DYNAMIC,
+            enable_final_answer_guard=True,
+            enable_stagnation_recovery=True,
+        ),
+    )
+
+    assert dynamic_agent.planner is not None
+    assert dynamic_agent.plan_evaluator is not None
+    assert dynamic_agent.plan_controller is not None
+    assert dynamic_agent.final_answer_policy is not None
+    assert dynamic_agent.stagnation_policy is not None
+
+
+def test_stagnation_recovery_requires_a_signal_source() -> None:
+    with pytest.raises(ValueError, match="requires dynamic planning"):
+        Agent(
+            task=make_task(),
+            config=AgentConfig(
+                planning_mode=PlanningMode.NONE,
+                enable_stagnation_recovery=True,
+            ),
+        )
+
+
+def test_run_without_planning_returns_direct_answer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    requests = install_responses(monkeypatch, FakeMessage(content="Task completed."))
+    agent = Agent(task=make_task(), config=AgentConfig(planning_mode=PlanningMode.NONE))
+
+    answer = agent.run(
+        user_input="Complete the task.",
+        task_input={"label": "example"},
+    )
+
+    assert answer == "Task completed."
+    assert agent.state.status is RunStatus.COMPLETED
+    assert agent.state.plan is None
+    assert agent.state.task_state == {"label": "example", "values": []}
+    assert agent.last_outcome == AgentRunOutcome.completed(answer="Task completed.")
+    assert agent.trace.steps_used == 1
+    assert agent.trace.finished_at is not None
+
+    messages, tool_schemas = requests[0]
+    assert messages[0] == {"role": "system", "content": "You store values for tests."}
+    assert messages[1] == {"role": "user", "content": "Complete the task."}
+    assert "Task plan:" not in messages[-1]["content"]
+    assert tool_schemas[0]["function"]["name"] == "store_value"
+
+
+def test_static_planning_builds_a_plan_without_progress_evaluation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    install_responses(monkeypatch, FakeMessage(content="Static task completed."))
+    planner = FakePlanner()
+    evaluator = FakePlanEvaluator()
     agent = Agent(
-        task=task,
+        task=make_task(),
+        planner=planner,
+        plan_evaluator=evaluator,
+        config=AgentConfig(planning_mode=PlanningMode.STATIC),
+    )
+
+    answer = agent.run("Follow the roadmap.")
+
+    assert answer == "Static task completed."
+    assert planner.goals == ["Follow the roadmap."]
+    assert evaluator.calls == []
+    assert agent.state.plan is not None
+    assert agent.state.plan.status == "completed"
+    assert agent.state.plan.result == "Static task completed."
+    assert agent.state.plan.steps[0].status == "skipped"
+
+
+def test_tool_result_updates_task_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    requests = install_responses(
+        monkeypatch,
+        FakeMessage(tool_calls=[make_tool_call(arguments={"value": 7})]),
+        FakeMessage(content="Stored."),
+    )
+    agent = Agent(task=make_task(), config=AgentConfig(planning_mode=PlanningMode.NONE))
+
+    answer = agent.run("Store seven.", max_steps=2)
+
+    assert answer == "Stored."
+    assert agent.state.task_state["values"] == [7]
+    assert agent.trace.tool_calls_used == 1
+    assert agent.trace.steps[0].tool_calls[0].success is True
+    assert agent.trace.steps[0].tool_calls[0].arguments == {"value": 7}
+
+    second_request_messages, _ = requests[1]
+    assert any(
+        message.get("role") == "tool" and message.get("tool_call_id") == "call_1"
+        for message in second_request_messages
+    )
+    assert "Stored values: [7]" in second_request_messages[-1]["content"]
+
+
+def test_dynamic_planning_evaluates_each_tool_batch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    install_responses(
+        monkeypatch,
+        FakeMessage(tool_calls=[make_tool_call(arguments={"value": 9})]),
+        FakeMessage(content="Verified result."),
+    )
+    evaluator = FakePlanEvaluator(
+        PlanUpdate.from_dict(
+            {
+                "action": "complete_current_step",
+                "result": "The value was collected.",
+            }
+        )
+    )
+    agent = Agent(
+        task=make_task(),
         planner=FakePlanner(),
         plan_evaluator=evaluator,
+        config=AgentConfig(planning_mode=PlanningMode.DYNAMIC),
     )
 
-    result = agent.run(
-        user_input="Store the value.",
-        max_steps=3,
+    answer = agent.run("Collect a value.", max_steps=2)
+
+    assert answer == "Verified result."
+    assert len(evaluator.calls) == 1
+    evidence = evaluator.calls[0]["latest_evidence"]
+    assert evidence[0]["tool_call_id"] == "call_1"
+    assert evidence[0]["result"] == {"success": True, "value": 9}
+    assert agent.trace.steps[0].plan_update["action"] == "complete_current_step"
+    assert agent.state.plan is not None
+    assert agent.state.plan.status == "completed"
+
+
+def test_final_answer_guard_rejects_an_answer_until_dynamic_plan_completes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    requests = install_responses(
+        monkeypatch,
+        FakeMessage(tool_calls=[make_tool_call(arguments={"value": 1})]),
+        FakeMessage(content="Premature answer."),
+        FakeMessage(
+            tool_calls=[
+                make_tool_call(arguments={"value": 2}, call_id="call_2")
+            ]
+        ),
+        FakeMessage(content="Final verified answer."),
+    )
+    evaluator = FakePlanEvaluator(
+        PlanUpdate.from_dict(
+            {"action": "keep_current_step", "reason": "More evidence is needed."}
+        ),
+        PlanUpdate.from_dict(
+            {"action": "complete_current_step", "result": "Evidence is complete."}
+        ),
+    )
+    agent = Agent(
+        task=make_task(),
+        planner=FakePlanner(),
+        plan_evaluator=evaluator,
+        final_answer_policy=FinalAnswerPolicy(),
+        config=AgentConfig(
+            planning_mode=PlanningMode.DYNAMIC,
+            enable_final_answer_guard=True,
+        ),
+    )
+
+    answer = agent.run("Verify the result.", max_steps=4)
+
+    assert answer == "Final verified answer."
+    assert agent.trace.steps[1].final_answer_decision["allowed"] is False
+    assert agent.trace.steps[3].final_answer_decision["allowed"] is True
+    third_request_messages, _ = requests[2]
+    assert any(
+        message.get("role") == "system"
+        and "not accepted as the final answer" in message.get("content", "")
+        for message in third_request_messages
+    )
+
+
+def test_tool_budget_stops_before_executing_excess_calls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    install_responses(
+        monkeypatch,
+        FakeMessage(
+            tool_calls=[
+                make_tool_call(arguments={"value": 1}, call_id="call_1"),
+                make_tool_call(arguments={"value": 2}, call_id="call_2"),
+            ]
+        ),
+    )
+    agent = Agent(task=make_task(), config=AgentConfig(planning_mode=PlanningMode.NONE))
+
+    answer = agent.run("Store values.", max_tool_calls=1)
+
+    assert "maximum number of allowed tool calls" in answer
+    assert agent.state.status is RunStatus.FAILED
+    assert agent.last_outcome is not None
+    assert agent.last_outcome.stop_reason == "tool_budget_exceeded"
+    assert agent.state.task_state["values"] == [1]
+    assert agent.trace.tool_calls_used == 1
+
+
+@pytest.mark.parametrize(
+    ("run_kwargs", "message", "stop_reason"),
+    [
+        ({"max_steps": 0}, "max_steps must be greater than zero.", "invalid_max_steps"),
+        (
+            {"max_tool_calls": 0},
+            "max_tool_calls must be greater than zero.",
+            "invalid_max_tool_calls",
+        ),
+    ],
+)
+def test_run_rejects_invalid_budgets(run_kwargs, message, stop_reason) -> None:
+    agent = Agent(task=make_task(), config=AgentConfig(planning_mode=PlanningMode.NONE))
+
+    assert agent.run("Do work.", **run_kwargs) == message
+    assert agent.state.status is RunStatus.FAILED
+    assert agent.last_outcome is not None
+    assert agent.last_outcome.stop_reason == stop_reason
+    assert agent.trace.finished_at is not None
+
+
+def test_run_records_llm_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fail_chat(messages, tools):
+        raise LLMClientError("simulated connection failure")
+
+    monkeypatch.setattr(agent_module, "chat", fail_chat)
+    agent = Agent(task=make_task(), config=AgentConfig(planning_mode=PlanningMode.NONE))
+
+    answer = agent.run("Do work.")
+
+    assert "simulated connection failure" in answer
+    assert agent.state.status is RunStatus.FAILED
+    assert agent.last_outcome is not None
+    assert agent.last_outcome.stop_reason == "llm_error"
+    assert agent.trace.steps[0].error == answer
+
+
+def test_each_run_gets_fresh_state_and_trace(monkeypatch: pytest.MonkeyPatch) -> None:
+    install_responses(
+        monkeypatch,
+        FakeMessage(tool_calls=[make_tool_call(arguments={"value": 1})]),
+        FakeMessage(content="First run."),
+        FakeMessage(content="Second run."),
+    )
+    agent = Agent(task=make_task(), config=AgentConfig(planning_mode=PlanningMode.NONE))
+
+    assert agent.run("First.", max_steps=2, task_input={"label": "one"}) == "First run."
+    first_trace = agent.trace
+    assert agent.state.task_state["values"] == [1]
+
+    assert agent.run("Second.", task_input={"label": "two"}) == "Second run."
+    assert agent.trace is not first_trace
+    assert agent.trace.tool_calls_used == 0
+    assert agent.state.task_state == {"label": "two", "values": []}
+
+
+@pytest.mark.parametrize(
+    ("tool_call", "expected_error"),
+    [
+        (make_tool_call(arguments="{bad json"), "Invalid JSON arguments"),
+        (make_tool_call(arguments=[]), "must be a JSON object"),
+        (make_tool_call(name="missing_tool"), "Tool does not exist"),
+        (make_tool_call(arguments={}), "Tool execution failed"),
+    ],
+)
+def test_execute_tool_normalizes_invalid_calls(tool_call, expected_error) -> None:
+    agent = Agent(task=make_task(), config=AgentConfig(planning_mode=PlanningMode.NONE))
+    agent._start_run(
+        user_input="Test a tool call.",
+        task_input={},
+        max_steps=1,
+        max_tool_calls=1,
+    )
+
+    result, trace = agent.execute_tool(tool_call)
+
+    assert result["success"] is False
+    assert expected_error in result["error"]
+    assert trace.success is False
+    assert agent.state.errors[-1] == result["error"]
+
+
+@pytest.mark.parametrize(
+    ("tool_result", "expected_error"),
+    [
+        ("not an object", "expected an object"),
+        ({"value": 1}, "missing boolean success"),
+    ],
+)
+def test_execute_tool_rejects_invalid_results(tool_result, expected_error) -> None:
+    def invalid_tool(value: int):
+        return tool_result
+
+    agent = Agent(
+        task=make_task(function=invalid_tool),
+        config=AgentConfig(planning_mode=PlanningMode.NONE),
+    )
+    agent._start_run(
+        user_input="Test a tool result.",
+        task_input={},
+        max_steps=1,
+        max_tool_calls=1,
+    )
+
+    result, _ = agent.execute_tool(make_tool_call())
+
+    assert result["success"] is False
+    assert expected_error in result["error"]
+
+
+def test_execute_tool_converts_exceptions_to_failures() -> None:
+    def failing_tool(value: int) -> dict[str, Any]:
+        raise RuntimeError("boom")
+
+    agent = Agent(
+        task=make_task(function=failing_tool),
+        config=AgentConfig(planning_mode=PlanningMode.NONE),
+    )
+    agent._start_run(
+        user_input="Test a tool failure.",
+        task_input={},
+        max_steps=1,
+        max_tool_calls=1,
+    )
+
+    result, _ = agent.execute_tool(make_tool_call())
+
+    assert result == {"success": False, "error": "Tool execution failed: boom"}
+
+
+def test_execute_tool_blocks_a_third_identical_attempt() -> None:
+    agent = Agent(task=make_task(), config=AgentConfig(planning_mode=PlanningMode.NONE))
+    agent._start_run(
+        user_input="Test repeated calls.",
+        task_input={},
+        max_steps=1,
         max_tool_calls=3,
-        task_input={
-            "label": "example",
-        },
     )
+    tool_call = make_tool_call(arguments={"value": 3})
 
-    assert result == "Custom task completed."
+    first_result, _ = agent.execute_tool(tool_call)
+    second_result, _ = agent.execute_tool(tool_call)
+    third_result, _ = agent.execute_tool(tool_call)
 
-    assert agent.state.task_state == {
-        "label": "example",
-        "values": [42],
+    assert first_result["success"] is True
+    assert second_result["success"] is True
+    assert third_result == {
+        "success": False,
+        "error": "Repeated tool call detected. Try another approach.",
     }
-
-    first_messages, first_tools = received_requests[0]
-
-    assert first_messages[0] == {
-        "role": "system",
-        "content": ("You are executing a custom test task."),
-    }
-
-    assert first_tools[0]["function"]["name"] == "store_value"
-
-    second_messages, _ = received_requests[1]
-
-    state_messages = [
-        message
-        for message in second_messages
-        if (
-            message.get("role") == "system"
-            and "Task-specific state (custom_task)" in message.get("content", "")
-        )
-    ]
-
-    assert len(state_messages) == 1
-    assert "Label: example" in state_messages[0]["content"]
-    assert "Stored values: [42]" in state_messages[0]["content"]

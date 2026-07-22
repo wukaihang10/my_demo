@@ -8,7 +8,8 @@ from agent.plan_evaluator import (
     LLMPlanProgressEvaluator,
     PlanEvaluationResponseError,
 )
-from agent.state import RepositoryState, AgentState
+from agent.state import AgentState
+from tasks.repository_state import RepositoryState
 
 
 def make_running_plan() -> AgentPlan:
