@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from rag.interfaces import EmbeddingClient
+
 from rag.code_prompt_builder import (
     CodeRAGPromptBuilder,
 )
@@ -14,6 +16,7 @@ from rag.indexer import RAGIndexer
 from rag.models import (
     IndexBuildResult,
     RAGAnswer,
+    RAGSearchResponse,
 )
 from rag.python_chunker import (
     PythonASTChunker,
@@ -43,6 +46,7 @@ class PythonRepositoryRAG:
         self,
         repository_path: str | Path,
         model_name: str = ("BAAI/bge-small-zh-v1.5"),
+        embedding_client: EmbeddingClient | None = None,
         max_chunk_characters: int = 2400,
         overlap_lines: int = 8,
         max_context_characters: int = 10000,
@@ -69,11 +73,15 @@ class PythonRepositoryRAG:
             overlap_lines=overlap_lines,
         )
 
-        self.embedding_client = SentenceTransformerEmbeddingClient(
-            model_name=model_name,
-            show_progress_bar=(show_progress_bar),
-            device=device,
-        )
+        if embedding_client is None:
+            self.embedding_client = SentenceTransformerEmbeddingClient(
+                model_name=model_name,
+                show_progress_bar=(show_progress_bar),
+                device=device,
+            )
+
+        else:
+            embedding_client = embedding_client
 
         self.vector_store = InMemoryVectorStore(
             dimension=(self.embedding_client.dimension)
@@ -126,6 +134,24 @@ class PythonRepositoryRAG:
 
         return self.service.answer(
             question=question,
+            top_k=top_k,
+            minimum_score=minimum_score,
+        )
+
+    def search(
+        self,
+        query: str,
+        top_k: int = 12,
+        minimum_score: float | None = None,
+    ) -> RAGSearchResponse:
+        if not self.is_indexed:
+            raise RuntimeError(
+                "Repository index has not been built. "
+                "Call rebuild() before search()."
+            )
+
+        return self.service.search(
+            query=query,
             top_k=top_k,
             minimum_score=minimum_score,
         )

@@ -32,7 +32,6 @@ from agent.stagnation import StagnationDecision, StagnationPolicy, StagnationTra
 from agent.outcome import AgentRunOutcome
 from agent.config import AgentConfig, PlanningMode
 
-
 class Agent:
 
     def __init__(

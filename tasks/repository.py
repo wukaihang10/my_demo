@@ -2,8 +2,9 @@ from typing import Any
 
 from tasks.repository_state import RepositoryState
 from agent.task import TaskProfile
+from rag.repository_manager import RepositoryKnowledgeManager
 from tools.base import Tool
-from tools.registry import TOOL_MAP
+from tools.registry import create_repository_tool_map
 
 REPOSITORY_SYSTEM_PROMPT = """
 You are a GitHub repository analysis agent.
@@ -39,6 +40,8 @@ REPOSITORY_TOOL_NAMES = (
     "list_files",
     "read_file",
     "search_code",
+    "index_repository_knowledge",
+    "search_repository_knowledge",
 )
 
 
@@ -175,9 +178,13 @@ def build_repository_context(
     return "\n".join(lines)
 
 
-def _build_repository_tools() -> tuple[Tool, ...]:
+def _build_repository_tools(
+    repository_manager: RepositoryKnowledgeManager,
+) -> tuple[Tool, ...]:
+    tool_map = create_repository_tool_map(repository_manager)
+
     missing_tools = [
-        tool_name for tool_name in REPOSITORY_TOOL_NAMES if tool_name not in TOOL_MAP
+        tool_name for tool_name in REPOSITORY_TOOL_NAMES if tool_name not in tool_map
     ]
 
     if missing_tools:
@@ -187,16 +194,27 @@ def _build_repository_tools() -> tuple[Tool, ...]:
             "Repository task references unregistered tools: " f"{missing_text}"
         )
 
-    return tuple(TOOL_MAP[tool_name] for tool_name in REPOSITORY_TOOL_NAMES)
+    return tuple(tool_map[tool_name] for tool_name in REPOSITORY_TOOL_NAMES)
 
 
-REPOSITORY_TOOLS = _build_repository_tools()
+def create_repository_task(
+    repository_manager: RepositoryKnowledgeManager | None = None,
+) -> TaskProfile[RepositoryState]:
+    """
+    Create an isolated repository task for one Agent.
 
-REPOSITORY_TASK = TaskProfile[RepositoryState](
-    name="repository_analysis",
-    system_prompt=REPOSITORY_SYSTEM_PROMPT,
-    tools=REPOSITORY_TOOLS,
-    create_state=create_repository_state,
-    reduce_tool_result=reduce_repository_tool_result,
-    build_context=build_repository_context,
-)
+    When no manager is supplied, a fresh manager is created. Its bound methods
+    are retained by the task's Tool objects, so the owning Agent keeps the
+    manager alive for as long as it keeps the task.
+    """
+
+    manager = repository_manager or RepositoryKnowledgeManager()
+
+    return TaskProfile[RepositoryState](
+        name="repository_analysis",
+        system_prompt=REPOSITORY_SYSTEM_PROMPT,
+        tools=_build_repository_tools(manager),
+        create_state=create_repository_state,
+        reduce_tool_result=reduce_repository_tool_result,
+        build_context=build_repository_context,
+    )

@@ -7,6 +7,7 @@ from rag.models import (
     BuiltContext,
     RAGAnswer,
     IndexBuildResult,
+    RAGSearchResponse,
 )
 from rag.chunker import TextChunker
 from rag.embedding import SentenceTransformerEmbeddingClient
@@ -25,6 +26,9 @@ from rag.code_prompt_builder import (
 )
 from rag.python_repository_rag import (
     PythonRepositoryRAG,
+)
+from rag.repository_manager import (
+    RepositoryKnowledgeManager,
 )
 
 __all__ = [
@@ -49,4 +53,6 @@ __all__ = [
     "PythonDocumentLoader",
     "CodeRAGPromptBuilder",
     "PythonRepositoryRAG",
+    "RAGSearchResponse",
+    "RepositoryKnowledgeManager",
 ]

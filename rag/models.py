@@ -119,6 +119,30 @@ class RAGAnswer:
 
 
 @dataclass
+class RAGSearchResponse:
+    """
+    一次完整的 RAG 检索结果，但不调用生成模型。
+
+    query:
+        实际检索的问题。
+
+    context:
+        经过筛选、编号和预算控制后的上下文。
+
+    search_results:
+        向量检索最初返回的 Top-k 结果。
+    """
+
+    query: str
+    context: BuiltContext
+    search_results: list[SearchResult]
+
+    @property
+    def sources(self) -> list[ContextItem]:
+        return self.context.items
+
+
+@dataclass
 class IndexBuildResult:
     """
     一次索引构建的统计结果。

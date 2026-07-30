@@ -1,6 +1,7 @@
 from .base import Tool
 from .github import clone_repository
 from .filesystem import list_files, read_file, search_code, summarize_repository
+from rag.repository_manager import RepositoryKnowledgeManager
 
 TOOLS = [
     Tool(
@@ -130,3 +131,77 @@ where a feature is implemented.
 ]
 
 TOOL_MAP = {tool.name: tool for tool in TOOLS}
+
+
+def create_repository_tool_map(
+    repository_manager: RepositoryKnowledgeManager,
+) -> dict[str, Tool]:
+    """
+    Create repository tools bound to one manager instance.
+
+    The returned RAG tools must not be stored in the module-level TOOL_MAP:
+    their bound methods carry repository index state that belongs to one
+    repository Agent.
+    """
+
+    repository_tools = [
+        *TOOLS,
+        Tool(
+            name="index_repository_knowledge",
+            description="""
+Build or rebuild a semantic RAG index for a local Python repository.
+Call this after cloning a repository or after its files have changed.
+Do not call it repeatedly when the same index is already ready.
+""",
+            function=repository_manager.index_repository_knowledge,
+            parameters={
+                "type": "object",
+                "properties": {
+                    "repository_path": {
+                        "type": "string",
+                        "description": (
+                            "Local path of the Python repository to index."
+                        ),
+                    },
+                },
+                "required": ["repository_path"],
+                "additionalProperties": False,
+            },
+        ),
+        Tool(
+            name="search_repository_knowledge",
+            description="""
+Semantically search the currently indexed Python repository and return
+relevant code evidence with file paths, symbols and line ranges.
+Use this for architecture, behavior and implementation questions.
+Use exact code search for a precise identifier or literal string.
+""",
+            function=repository_manager.search_repository_knowledge,
+            parameters={
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": (
+                            "A clear, self-contained question about the "
+                            "repository code."
+                        ),
+                    },
+                    "top_k": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 12,
+                        "default": 8,
+                        "description": (
+                            "Maximum number of initial semantic retrieval "
+                            "candidates."
+                        ),
+                    },
+                },
+                "required": ["query"],
+                "additionalProperties": False,
+            },
+        ),
+    ]
+
+    return {tool.name: tool for tool in repository_tools}
