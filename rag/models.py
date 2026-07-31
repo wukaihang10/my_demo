@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 Metadata = dict[str, Any]
 
@@ -156,3 +156,14 @@ class IndexBuildResult:
     @property
     def is_empty(self) -> bool:
         return self.chunk_count == 0
+
+
+@dataclass(frozen=True)
+class IndexReadyResult:
+    """
+    展示index是由disk加载还是重建。
+    """
+
+    index: IndexBuildResult
+    source: Literal["disk", "rebuilt"]
+    rebuild_reason: str | None = None

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
+import json
 
 from rag.embedding import (
     SentenceTransformerEmbeddingClient,
@@ -9,6 +10,10 @@ from rag.embedding import (
 from rag.interfaces import EmbeddingClient
 from rag.python_repository_rag import (
     PythonRepositoryRAG,
+)
+
+from rag.repository_snapshot import (
+    RepositoryChangedDuringIndexingError,
 )
 
 ToolResult = dict[str, Any]
@@ -32,11 +37,21 @@ class RepositoryKnowledgeManager:
         model_name: str = ("BAAI/bge-small-zh-v1.5"),
         max_chunk_characters: int = 2400,
         overlap_lines: int = 8,
-        max_context_characters: int = 10000,
-        max_context_items: int = 6,
+        max_context_characters: int = 8000,
+        max_context_items: int = 5,
+        max_tool_result_characters: int = 10000,
+        max_evidence_content_characters: int = 2400,
         show_progress_bar: bool = False,
         device: str | None = None,
     ) -> None:
+        if max_tool_result_characters <= 0:
+            raise ValueError("max_tool_result_characters " "must be greater than 0")
+
+        if max_evidence_content_characters <= 0:
+            raise ValueError(
+                "max_evidence_content_characters " "must be greater than 0"
+            )
+
         self.model_name = model_name
         self.max_chunk_characters = max_chunk_characters
         self.overlap_lines = overlap_lines
@@ -44,6 +59,8 @@ class RepositoryKnowledgeManager:
         self.max_context_items = max_context_items
         self.show_progress_bar = show_progress_bar
         self.device = device
+        self.max_tool_result_characters = max_tool_result_characters
+        self.max_evidence_content_characters = max_evidence_content_characters
 
         # 模型在第一次构建索引时才加载。
         self._embedding_client: EmbeddingClient | None = None
@@ -104,7 +121,20 @@ class RepositoryKnowledgeManager:
             max_context_items=(self.max_context_items),
         )
 
-        index_result = candidate_rag.rebuild()
+        index_directory = resolved_path / ".rag_index"
+
+        try:
+            ready_index = candidate_rag.ensure_index(index_directory)
+
+        except RepositoryChangedDuringIndexingError as error:
+            return self._failure(
+                error_type="repository_changed_during_indexing",
+                message=str(error),
+            )
+
+        index_result = ready_index.index
+        index_source = ready_index.source
+        rebuild_reason = ready_index.rebuild_reason
 
         if index_result.is_empty:
             return self._failure(
@@ -119,14 +149,21 @@ class RepositoryKnowledgeManager:
         self._repository_rag = candidate_rag
         self._repository_path = resolved_path
 
-        return {
+        result: ToolResult = {
             "success": True,
             "repository_path": str(resolved_path),
+            "index_directory": str(index_directory),
+            "index_source": index_source,
             "document_count": (index_result.document_count),
             "chunk_count": (index_result.chunk_count),
             "vector_dimension": (index_result.vector_dimension),
-            "message": ("Repository knowledge index " "was built successfully."),
+            "message": ("Repository knowledge index " "is ready."),
         }
+
+        if rebuild_reason is not None:
+            result["rebuild_reason"] = rebuild_reason
+
+        return result
 
     def search_repository_knowledge(
         self,
@@ -136,7 +173,8 @@ class RepositoryKnowledgeManager:
         """
         在当前活动代码仓库中进行语义检索。
 
-        只返回代码证据，不调用额外 LLM。
+        只返回经过预算控制的代码证据，
+        不调用额外 LLM。
         """
 
         if not isinstance(query, str):
@@ -176,14 +214,68 @@ class RepositoryKnowledgeManager:
             top_k=top_k,
         )
 
-        evidence = [self._serialize_evidence(item) for item in search_response.sources]
+        selected_items = list(search_response.sources)
+
+        evidence: list[ToolResult] = []
+
+        for item in selected_items:
+            serialized_item = self._serialize_evidence(item)
+
+            candidate_evidence = [
+                *evidence,
+                serialized_item,
+            ]
+
+            candidate_result = self._build_search_result(
+                query=stripped_query,
+                retrieved_count=len(search_response.search_results),
+                selected_count=len(selected_items),
+                context_character_count=(search_response.context.character_count),
+                evidence=candidate_evidence,
+            )
+
+            if self._encoded_size(candidate_result) > self.max_tool_result_characters:
+                break
+
+            evidence.append(serialized_item)
+
+        return self._build_search_result(
+            query=stripped_query,
+            retrieved_count=len(search_response.search_results),
+            selected_count=len(selected_items),
+            context_character_count=(search_response.context.character_count),
+            evidence=evidence,
+        )
+
+    def _build_search_result(
+        self,
+        *,
+        query: str,
+        retrieved_count: int,
+        selected_count: int,
+        context_character_count: int,
+        evidence: list[ToolResult],
+    ) -> ToolResult:
+        omitted_evidence_count = selected_count - len(evidence)
+
+        content_was_truncated = any(
+            item.get(
+                "content_truncated",
+                False,
+            )
+            for item in evidence
+        )
 
         return {
             "success": True,
             "repository_path": str(self._repository_path),
-            "query": stripped_query,
-            "retrieved_count": len(search_response.search_results),
+            "query": query,
+            "retrieved_count": retrieved_count,
+            "selected_count": selected_count,
             "evidence_count": len(evidence),
+            "omitted_evidence_count": (omitted_evidence_count),
+            "context_character_count": (context_character_count),
+            "truncated": (omitted_evidence_count > 0 or content_was_truncated),
             "evidence": evidence,
         }
 
@@ -200,27 +292,97 @@ class RepositoryKnowledgeManager:
         return self._embedding_client
 
     @staticmethod
+    def _truncate_content(
+        content: str,
+        max_characters: int,
+    ) -> tuple[str, bool]:
+        if len(content) <= max_characters:
+            return content, False
+
+        suffix = "\n...[content truncated; " "use read_file for full context]"
+
+        available_characters = max(
+            1,
+            max_characters - len(suffix),
+        )
+
+        cut_position = content.rfind(
+            "\n",
+            0,
+            available_characters,
+        )
+
+        # 如果前半部分没有合适的换行，
+        # 说明可能存在一条特别长的代码行。
+        if cut_position < available_characters // 2:
+            cut_position = available_characters
+
+        truncated_content = content[:cut_position].rstrip() + suffix
+
+        return truncated_content, True
+
+    @staticmethod
+    def _encoded_size(
+        result: ToolResult,
+    ) -> int:
+        encoded = json.dumps(
+            result,
+            ensure_ascii=False,
+            default=str,
+        )
+
+        return len(encoded)
+
     def _serialize_evidence(
+        self,
         item,
     ) -> ToolResult:
         chunk = item.chunk
         metadata = chunk.metadata
 
-        return {
+        content, content_truncated = self._truncate_content(
+            chunk.content,
+            self.max_evidence_content_characters,
+        )
+
+        evidence: ToolResult = {
             "source_id": item.context_id,
+            "rank": item.retrieval_rank,
             "source": chunk.source,
-            "symbol": metadata.get("symbol"),
-            "symbol_type": metadata.get("symbol_type"),
-            "start_line": metadata.get("start_line"),
-            "end_line": metadata.get("end_line"),
-            "part_index": metadata.get("part_index"),
-            "part_count": metadata.get("part_count"),
-            "score": round(
-                item.score,
-                6,
-            ),
-            "content": chunk.content,
+            "content": content,
         }
+
+        symbol = metadata.get("symbol")
+
+        if isinstance(symbol, str) and symbol:
+            evidence["symbol"] = symbol
+
+        symbol_type = metadata.get("symbol_type")
+
+        if isinstance(symbol_type, str) and symbol_type:
+            evidence["symbol_type"] = symbol_type
+
+        start_line = metadata.get("start_line")
+        end_line = metadata.get("end_line")
+
+        if isinstance(start_line, int) and isinstance(end_line, int):
+            evidence["start_line"] = start_line
+            evidence["end_line"] = end_line
+
+        part_index = metadata.get("part_index")
+        part_count = metadata.get("part_count")
+
+        if (
+            isinstance(part_index, int)
+            and isinstance(part_count, int)
+            and part_count > 1
+        ):
+            evidence["part"] = f"{part_index + 1}/" f"{part_count}"
+
+        if content_truncated:
+            evidence["content_truncated"] = True
+
+        return evidence
 
     @staticmethod
     def _failure(
@@ -230,5 +392,5 @@ class RepositoryKnowledgeManager:
         return {
             "success": False,
             "error_type": error_type,
-            "message": message,
+            "error": message,
         }

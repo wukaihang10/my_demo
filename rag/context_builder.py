@@ -2,55 +2,76 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from rag.models import BuiltContext, ContextItem, SearchResult
+from rag.models import (
+    BuiltContext,
+    ContextItem,
+    SearchResult,
+)
 
 
 class ContextBuilder:
     """
     将检索结果构造成适合交给 LLM 的资料上下文。
 
-    当前版本负责：
+    当前负责：
     1. 按 Chunk ID 去重；
     2. 保持检索排序；
     3. 限制最大资料数量；
     4. 限制 Context 总字符数；
-    5. 添加资料编号、来源和位置。
+    5. 限制同一代码符号占用的资料数量；
+    6. 添加资料编号、来源和位置。
     """
 
     def __init__(
         self,
         max_context_characters: int = 6000,
         max_items: int = 5,
+        max_items_per_symbol: int = 2,
         include_scores: bool = False,
     ) -> None:
         if max_context_characters <= 0:
-            raise ValueError("max_content_characters must be greater than 0")
+            raise ValueError("max_context_characters " "must be greater than 0")
 
         if max_items <= 0:
             raise ValueError("max_items must be greater than 0")
 
-        self.max_content_characters = max_context_characters
+        if max_items_per_symbol <= 0:
+            raise ValueError("max_items_per_symbol " "must be greater than 0")
+
+        self.max_context_characters = max_context_characters
         self.max_items = max_items
+        self.max_items_per_symbol = max_items_per_symbol
         self.include_scores = include_scores
 
     def build(
         self,
         results: Sequence[SearchResult],
     ) -> BuiltContext:
-        """
-        将 SearchResult 列表转换成 BuiltContext。
-        输入结果默认已经按照相关性从高到低排序。
-        """
-
         unique_results = self._deduplicate(results)
 
         selected_items: list[ContextItem] = []
         sections: list[str] = []
         used_characters = 0
 
+        symbol_counts: dict[
+            tuple[str, str],
+            int,
+        ] = {}
+
         for result in unique_results:
             if len(selected_items) >= self.max_items:
                 break
+
+            group_key = self._build_group_key(result)
+
+            if group_key is not None:
+                current_count = symbol_counts.get(
+                    group_key,
+                    0,
+                )
+
+                if current_count >= self.max_items_per_symbol:
+                    continue
 
             context_id = f"source_{len(selected_items) + 1}"
 
@@ -63,16 +84,25 @@ class ContextBuilder:
 
             section = self._format_item(item)
 
-            sepatator_size = 2 if sections else 0
+            separator_size = 2 if sections else 0
 
-            projected_size = used_characters + sepatator_size + len(section)
+            projected_size = used_characters + separator_size + len(section)
 
-            if projected_size > self.max_content_characters:
+            if projected_size > self.max_context_characters:
                 continue
 
             selected_items.append(item)
             sections.append(section)
             used_characters = projected_size
+
+            if group_key is not None:
+                symbol_counts[group_key] = (
+                    symbol_counts.get(
+                        group_key,
+                        0,
+                    )
+                    + 1
+                )
 
         text = "\n\n".join(sections)
 
@@ -86,10 +116,6 @@ class ContextBuilder:
     def _deduplicate(
         results: Sequence[SearchResult],
     ) -> list[SearchResult]:
-        """
-        根据 Chunk ID 去重。
-        """
-
         seen_ids: set[str] = set()
         unique_results: list[SearchResult] = []
 
@@ -103,6 +129,27 @@ class ContextBuilder:
             unique_results.append(result)
 
         return unique_results
+
+    @staticmethod
+    def _build_group_key(
+        result: SearchResult,
+    ) -> tuple[str, str] | None:
+        chunk = result.chunk
+
+        symbol = chunk.metadata.get("symbol")
+
+        if not isinstance(symbol, str):
+            return None
+
+        stripped_symbol = symbol.strip()
+
+        if not stripped_symbol:
+            return None
+
+        return (
+            chunk.source,
+            stripped_symbol,
+        )
 
     def _format_item(
         self,
@@ -137,7 +184,6 @@ class ContextBuilder:
             )
 
         part_index = metadata.get("part_index")
-
         part_count = metadata.get("part_count")
 
         if (

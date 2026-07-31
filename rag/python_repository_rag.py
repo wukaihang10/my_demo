@@ -15,6 +15,7 @@ from rag.generator import RAGGenerator
 from rag.indexer import RAGIndexer
 from rag.models import (
     IndexBuildResult,
+    IndexReadyResult,
     RAGAnswer,
     RAGSearchResponse,
 )
@@ -28,6 +29,19 @@ from rag.retriever import VectorRetriever
 from rag.service import NaiveRAG
 from rag.vector_store import (
     InMemoryVectorStore,
+)
+
+from rag.index_storage import (
+    IndexCompatibilityError,
+    IndexCorruptionError,
+    RAGIndexStorage,
+)
+
+from rag.repository_snapshot import (
+    RepositoryChangedDuringIndexingError,
+    RepositorySnapshot,
+    RepositorySnapshotBuilder,
+    describe_repository_changes,
 )
 
 
@@ -68,9 +82,14 @@ class PythonRepositoryRAG:
 
         self.loader = PythonDocumentLoader()
 
+        self.snapshot_builder = RepositorySnapshotBuilder(loader=self.loader)
+
+        self.max_chunk_characters = max_chunk_characters
+        self.overlap_lines = overlap_lines
+
         self.chunker = PythonASTChunker(
-            max_chunk_characters=(max_chunk_characters),
-            overlap_lines=overlap_lines,
+            max_chunk_characters=self.max_chunk_characters,
+            overlap_lines=self.overlap_lines,
         )
 
         if embedding_client is None:
@@ -79,9 +98,18 @@ class PythonRepositoryRAG:
                 show_progress_bar=(show_progress_bar),
                 device=device,
             )
+            self.embedding_model_id = model_name
 
         else:
-            embedding_client = embedding_client
+            self.embedding_client = embedding_client
+
+            self.embedding_model_id = str(
+                getattr(
+                    embedding_client,
+                    "model_name",
+                    type(embedding_client).__qualname__,
+                )
+            )
 
         self.vector_store = InMemoryVectorStore(
             dimension=(self.embedding_client.dimension)
@@ -116,6 +144,41 @@ class PythonRepositoryRAG:
     @property
     def is_indexed(self) -> bool:
         return not self.vector_store.is_empty
+
+    def ensure_index(
+        self,
+        index_directory: str | Path,
+        max_attempts: int = 2,
+    ) -> IndexReadyResult:
+        storage = RAGIndexStorage(index_directory)
+
+        rebuild_reason: str | None = None
+
+        if storage.exists():
+            try:
+                index_result = self._load_index(index_directory)
+
+                return IndexReadyResult(
+                    index=index_result,
+                    source="disk",
+                )
+
+            except (
+                IndexCorruptionError,
+                IndexCompatibilityError,
+            ) as error:
+                rebuild_reason = str(error)
+
+        index_result = self._rebuild_and_save(
+            index_directory=index_directory,
+            max_attempts=max_attempts,
+        )
+
+        return IndexReadyResult(
+            index=index_result,
+            source="rebuilt",
+            rebuild_reason=rebuild_reason,
+        )
 
     def rebuild(self) -> IndexBuildResult:
         return self.indexer.rebuild_directory(self.repository_path)
@@ -155,3 +218,166 @@ class PythonRepositoryRAG:
             top_k=top_k,
             minimum_score=minimum_score,
         )
+
+    def _rebuild_and_save(
+        self,
+        index_directory: str | Path,
+        max_attempts: int = 2,
+    ) -> IndexBuildResult:
+        if max_attempts <= 0:
+            raise ValueError("max_attempts must be greater than 0")
+
+        snapshot_before = self.build_repository_snapshot()
+
+        for _ in range(max_attempts):
+            index_result = self.rebuild()
+
+            snapshot_after = self.build_repository_snapshot()
+
+            if snapshot_before == snapshot_after:
+                if not index_result.is_empty:
+                    self._save_index(
+                        index_directory=index_directory,
+                        repository_files=snapshot_after,
+                    )
+
+                return index_result
+
+            snapshot_before = snapshot_after
+
+        raise RepositoryChangedDuringIndexingError(
+            "Repository Python files kept " "changing while the index was built."
+        )
+
+    def _save_index(
+        self,
+        index_directory: str | Path,
+        repository_files: RepositorySnapshot,
+    ) -> dict[str, object]:
+        """
+        将当前内存索引保存到磁盘。
+        """
+        chunks, vectors = self.vector_store.snapshot()
+
+        document_count = len({chunk.document_id for chunk in chunks})
+
+        storage = RAGIndexStorage(index_directory)
+
+        return storage.save(
+            repository_path=(self.repository_path),
+            repository_files=(repository_files),
+            embedding_model=(self.embedding_model_id),
+            vector_dimension=(self.embedding_client.dimension),
+            chunker_type=(type(self.chunker).__name__),
+            chunker_config={
+                "max_chunk_characters": (self.max_chunk_characters),
+                "overlap_lines": (self.overlap_lines),
+            },
+            document_count=document_count,
+            chunks=chunks,
+            vectors=vectors,
+        )
+
+    def _load_index(
+        self,
+        index_directory: str | Path,
+    ) -> IndexBuildResult:
+        storage = RAGIndexStorage(index_directory)
+
+        # 这里返回的索引已经是：
+        # 格式合法、文件完整、内部自洽。
+        loaded_index = storage.load()
+
+        current_repository_files = self.build_repository_snapshot()
+
+        # 这里只判断：
+        # 它能否用于当前仓库和当前配置。
+        self._validate_index_compatibility(
+            manifest=loaded_index.manifest,
+            current_repository_files=(current_repository_files),
+        )
+
+        self.vector_store.replace(
+            chunks=loaded_index.chunks,
+            vectors=loaded_index.vectors,
+        )
+
+        return IndexBuildResult(
+            source=str(self.repository_path),
+            document_count=(loaded_index.manifest["document_count"]),
+            chunk_count=len(loaded_index.chunks),
+            vector_dimension=(self.embedding_client.dimension),
+        )
+
+    def build_repository_snapshot(
+        self,
+    ) -> RepositorySnapshot:
+        return self.snapshot_builder.build(self.repository_path)
+
+    def _validate_index_compatibility(
+        self,
+        manifest: dict[str, object],
+        current_repository_files: RepositorySnapshot,
+    ) -> None:
+        stored_repository_path = Path(str(manifest["repository_path"])).resolve()
+
+        if stored_repository_path != self.repository_path:
+            raise IndexCompatibilityError(
+                "Index belongs to a different "
+                "repository: "
+                f"{stored_repository_path}"
+            )
+
+        stored_model = manifest["embedding_model"]
+
+        if stored_model != self.embedding_model_id:
+            raise IndexCompatibilityError(
+                "Index embedding model does "
+                "not match the current model: "
+                f"{stored_model} != "
+                f"{self.embedding_model_id}"
+            )
+
+        stored_dimension = manifest["vector_dimension"]
+
+        if stored_dimension != self.embedding_client.dimension:
+            raise IndexCompatibilityError(
+                "Index vector dimension does "
+                "not match the current model: "
+                f"{stored_dimension} != "
+                f"{self.embedding_client.dimension}"
+            )
+
+        expected_chunker_type = type(self.chunker).__name__
+
+        if manifest["chunker_type"] != expected_chunker_type:
+            raise IndexCompatibilityError(
+                "Index chunker type does "
+                "not match current chunker: "
+                f"{manifest['chunker_type']} != "
+                f"{expected_chunker_type}"
+            )
+
+        expected_chunker_config = {
+            "max_chunk_characters": (self.max_chunk_characters),
+            "overlap_lines": (self.overlap_lines),
+        }
+
+        if manifest["chunker_config"] != expected_chunker_config:
+            raise IndexCompatibilityError(
+                "Index chunker configuration " "does not match current " "configuration"
+            )
+
+        stored_repository_files = manifest["repository_files"]
+
+        if stored_repository_files != current_repository_files:
+            change_description = describe_repository_changes(
+                stored_snapshot=(stored_repository_files),
+                current_snapshot=(current_repository_files),
+            )
+
+            raise IndexCompatibilityError(
+                "Repository Python sources "
+                "changed after indexing: "
+                f"{change_description}"
+            )

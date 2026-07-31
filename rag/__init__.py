@@ -31,6 +31,14 @@ from rag.repository_manager import (
     RepositoryKnowledgeManager,
 )
 
+from rag.index_storage import (
+    IndexCompatibilityError,
+    IndexCorruptionError,
+    IndexStorageError,
+    LoadedIndex,
+    RAGIndexStorage,
+)
+
 __all__ = [
     "Chunk",
     "Document",
@@ -55,4 +63,9 @@ __all__ = [
     "PythonRepositoryRAG",
     "RAGSearchResponse",
     "RepositoryKnowledgeManager",
+    "IndexCompatibilityError",
+    "IndexCorruptionError",
+    "IndexStorageError",
+    "LoadedIndex",
+    "RAGIndexStorage",
 ]

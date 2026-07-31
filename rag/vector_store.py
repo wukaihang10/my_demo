@@ -275,6 +275,26 @@ class InMemoryVectorStore:
 
         self._id_to_position.clear()
 
+    def snapshot(
+        self,
+    ) -> tuple[list[Chunk], FloatMatrix]:
+        """
+        返回当前 Chunk 和向量的副本。
+
+        用于索引持久化，避免持久化层直接访问
+        _chunks 和 _vectors 私有属性。
+        """
+
+        chunks = list(self._chunks)
+
+        vectors = np.array(
+            self._vectors,
+            dtype=np.float32,
+            copy=True,
+        )
+
+        return chunks, vectors
+
     def _validate_matrix(
         self,
         vectors: FloatMatrix,

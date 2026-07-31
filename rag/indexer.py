@@ -12,11 +12,7 @@ from rag.interfaces import (
     VectorStore,
 )
 
-from rag.chunker import TextChunker
-from rag.embedding import SentenceTransformerEmbeddingClient
-from rag.loader import TextDocumentLoader
 from rag.models import Document, IndexBuildResult
-from rag.vector_store import InMemoryVectorStore
 
 
 class RAGIndexer:

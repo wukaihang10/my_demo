@@ -32,6 +32,7 @@ from agent.stagnation import StagnationDecision, StagnationPolicy, StagnationTra
 from agent.outcome import AgentRunOutcome
 from agent.config import AgentConfig, PlanningMode
 
+
 class Agent:
 
     def __init__(
@@ -728,7 +729,6 @@ class Agent:
                 self._apply_stagnation_recovery(
                     decision=stagnation_decision,
                     step_trace=step_trace,
-                    messages=messages,
                 )
 
         self._add_step_trace_once(step_trace)

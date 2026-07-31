@@ -18,6 +18,7 @@ class PythonDocumentLoader:
         ".idea",
         ".vscode",
         ".venv",
+        ".rag_index",
         "venv",
         "env",
         "__pycache__",
@@ -43,23 +44,11 @@ class PythonDocumentLoader:
         self,
         directory: str | Path,
     ) -> list[Document]:
-        root = Path(directory).resolve()
-
-        if not root.exists():
-            raise FileNotFoundError(f"Python project does not exist: {root}")
-
-        if not root.is_dir():
-            raise NotADirectoryError(f"Python project path is not a directory: {root}")
+        root = self._resolve_directory(directory)
 
         documents: list[Document] = []
 
-        for file_path in sorted(root.rglob("*.py")):
-            if self._should_ignore(
-                file_path=file_path,
-                root=root,
-            ):
-                continue
-
+        for file_path in self.discover_files(root):
             document = self.load_file(
                 file_path=file_path,
                 root=root,
@@ -69,6 +58,40 @@ class PythonDocumentLoader:
                 documents.append(document)
 
         return documents
+
+    def discover_files(
+        self,
+        directory: str | Path,
+    ) -> list[Path]:
+        """
+        返回当前 Loader 实际会处理的 Python 文件。
+
+        文件变化检测和文档加载共用该方法，
+        避免两套扫描规则不一致。
+        """
+
+        root = self._resolve_directory(directory)
+
+        files: list[Path] = []
+
+        for file_path in sorted(root.rglob("*.py")):
+            if not file_path.is_file():
+                continue
+
+            # 第一版不跟随源码文件符号链接，
+            # 避免意外索引仓库目录之外的文件。
+            if file_path.is_symlink():
+                continue
+
+            if self._should_ignore(
+                file_path=file_path,
+                root=root,
+            ):
+                continue
+
+            files.append(file_path)
+
+        return files
 
     def load_file(
         self,
@@ -120,6 +143,22 @@ class PythonDocumentLoader:
         return any(
             part in self.ignored_directories for part in relative_path.parts[:-1]
         )
+
+    @staticmethod
+    def _resolve_directory(
+        directory: str | Path,
+    ) -> Path:
+        root = Path(directory).resolve()
+
+        if not root.exists():
+            raise FileNotFoundError("Python project does not exist: " f"{root}")
+
+        if not root.is_dir():
+            raise NotADirectoryError(
+                "Python project path is not " f"a directory: {root}"
+            )
+
+        return root
 
     @staticmethod
     def _build_source(

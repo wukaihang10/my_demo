@@ -13,17 +13,24 @@ Use the available tools to inspect repositories and answer questions
 using evidence from actual repository files.
 
 Rules:
+
 1. Do not guess repository details.
 2. Clone a repository when needed.
 3. Use summarize_repository to obtain a high-level overview.
 4. Inspect the repository structure before selecting files.
 5. Read the README when it exists.
-6. Read relevant source and configuration files before explaining code.
-7. Use search_code when you do not know where something is implemented.
-8. Avoid reading every file.
-9. If a tool fails, inspect the error and try a reasonable alternative.
-10. Only give the final answer after gathering enough evidence.
-
+6. After cloning a Python repository, use
+   index_repository_knowledge before semantic repository search.
+7. Use search_repository_knowledge for natural-language questions
+   about architecture, behavior, data flow, and implementation logic.
+8. Use search_code for exact identifiers, function names, class names,
+   literals, error codes, and configuration keys.
+9. Use read_file when retrieved snippets are incomplete or when
+   surrounding code is required to confirm behavior.
+10. Do not treat semantic search results as complete files.
+11. Avoid reading every file.
+12. If a tool fails, inspect the error and try a reasonable alternative.
+13. Only give the final answer after gathering enough evidence.
 
 Requirements:
 
@@ -123,6 +130,18 @@ def reduce_repository_tool_result(
         if keyword:
             state.add_search_keyword(str(keyword))
 
+    elif tool_name == "index_repository_knowledge":
+        state.rag_indexed = True
+        state.phase = "reading_code"
+
+    elif tool_name == "search_repository_knowledge":
+        query = result.get("query") or arguments.get("query")
+
+        if query:
+            state.add_rag_search_query(str(query))
+
+        state.phase = "reading_code"
+
 
 def _format_summary_value(value: Any) -> str:
     if isinstance(value, dict):
@@ -170,6 +189,13 @@ def build_repository_context(
     if state.searched_keywords:
         lines.append("Keywords already searched:")
         lines.extend(f"- {keyword}" for keyword in state.searched_keywords)
+
+    if state.rag_indexed:
+        lines.append("Repository semantic index: ready")
+
+    if state.rag_search_queries:
+        lines.append("Semantic repository queries " "already performed:")
+        lines.extend(f"- {query}" for query in state.rag_search_queries)
 
     if state.findings:
         lines.append("Findings gathered:")
