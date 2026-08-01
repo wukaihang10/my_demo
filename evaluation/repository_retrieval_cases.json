@@ -1,0 +1,144 @@
+[
+  {
+    "id": "agent-main-loop",
+    "query": "Agent 的主运行循环在哪里，模型调用和工具执行如何循环进行？",
+    "relevant": [
+      {
+        "source": "agent/agent.py",
+        "symbol": "Agent.run"
+      }
+    ]
+  },
+
+  {
+    "id": "tool-execution",
+    "query": "Agent 在哪里解析并执行模型返回的工具调用？",
+    "relevant": [
+      {
+        "source": "agent/agent.py",
+        "symbol": "Agent.execute_tool"
+      }
+    ]
+  },
+
+  {
+    "id": "tool-finalization",
+    "query": "_finalize_tool_call 如何更新 state、observation 和 trace？",
+    "relevant": [
+      {
+        "source": "agent/agent.py",
+        "symbol": "Agent._finalize_tool_call"
+      }
+    ]
+  },
+
+  {
+    "id": "repository-state",
+    "query": "仓库分析任务保存已经读取文件、搜索关键词和 RAG 状态的数据结构在哪里？",
+    "relevant": [
+      {
+        "source": "tasks/repository_state.py",
+        "symbol": "RepositoryState"
+      }
+    ]
+  },
+
+  {
+    "id": "repository-reducer",
+    "query": "仓库工具执行成功后，是哪个函数把工具结果写回 RepositoryState？",
+    "relevant": [
+      {
+        "source": "tasks/repository.py",
+        "symbol": "reduce_repository_tool_result"
+      }
+    ]
+  },
+
+  {
+    "id": "repository-context",
+    "query": "RepositoryState 是如何转换成下一轮给模型看的 repository context 的？",
+    "relevant": [
+      {
+        "source": "tasks/repository.py",
+        "symbol": "build_repository_context"
+      }
+    ]
+  },
+
+  {
+    "id": "knowledge-manager-search",
+    "query": "search_repository_knowledge 工具是如何调用仓库 RAG 并整理 evidence 的？",
+    "relevant": [
+      {
+        "source": "rag/repository_manager.py",
+        "symbol": "RepositoryKnowledgeManager.search_repository_knowledge"
+      }
+    ]
+  },
+
+  {
+    "id": "repository-index-lifecycle",
+    "query": "Python 仓库 RAG 如何决定加载已有索引还是重新建立索引？",
+    "relevant": [
+      {
+        "source": "rag/python_repository_rag.py",
+        "symbol": "PythonRepositoryRAG.ensure_index"
+      }
+    ]
+  },
+
+  {
+    "id": "index-storage-load",
+    "query": "磁盘上的 chunks.json vectors.npy 和 manifest.json 在哪里被加载和校验？",
+    "relevant": [
+      {
+        "source": "rag/index_storage.py",
+        "symbol": "RAGIndexStorage.load"
+      }
+    ]
+  },
+
+  {
+    "id": "vector-retrieval",
+    "query": "查询文本在哪里被编码成向量并交给 VectorStore 搜索？",
+    "relevant": [
+      {
+        "source": "rag/retriever.py",
+        "symbol": "VectorRetriever.retrieve"
+      }
+    ]
+  },
+
+  {
+    "id": "python-ast-chunking",
+    "query": "Python 文件是如何按照函数、方法和类进行 AST 语义切分的？",
+    "relevant": [
+      {
+        "source": "rag/python_chunker.py",
+        "symbol": "PythonASTChunker"
+      }
+    ]
+  },
+
+  {
+    "id": "bm25-index",
+    "query": "代码 Chunk 的 BM25 倒排索引在哪里构建？",
+    "relevant": [
+      {
+        "source": "rag/bm25.py",
+        "symbol": "InMemoryBM25Index.replace"
+      }
+    ]
+  },
+
+  {
+    "id": "hybrid-retrieval",
+    "query": "向量检索和 BM25 的结果在哪里通过 RRF 合并？",
+    "relevant": [
+      {
+        "source": "rag/hybrid_retriever.py",
+        "symbol": "HybridRetriever.retrieve"
+      }
+    ]
+  }
+]

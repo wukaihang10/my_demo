@@ -40,6 +40,15 @@ class EmbeddingClient(Protocol):
     ) -> FloatVector: ...
 
 
+class Retriever(Protocol):
+    def retrieve(
+        self,
+        query: str,
+        top_k: int = 5,
+        minimum_score: float | None = None,
+    ) -> list[SearchResult]: ...
+
+
 class VectorStore(Protocol):
     dimension: int
 

@@ -39,6 +39,15 @@ from rag.index_storage import (
     RAGIndexStorage,
 )
 
+from rag.code_tokenizer import CodeTokenizer
+from rag.bm25 import (
+    BM25Retriever,
+    InMemoryBM25Index,
+)
+from rag.hybrid_retriever import (
+    HybridRetriever,
+)
+
 __all__ = [
     "Chunk",
     "Document",
@@ -68,4 +77,8 @@ __all__ = [
     "IndexStorageError",
     "LoadedIndex",
     "RAGIndexStorage",
+    "CodeTokenizer",
+    "BM25Retriever",
+    "InMemoryBM25Index",
+    "HybridRetriever",
 ]

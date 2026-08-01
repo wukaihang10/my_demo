@@ -44,6 +44,17 @@ from rag.repository_snapshot import (
     describe_repository_changes,
 )
 
+from rag.bm25 import (
+    BM25Retriever,
+    InMemoryBM25Index,
+)
+from rag.code_tokenizer import (
+    CodeTokenizer,
+)
+from rag.hybrid_retriever import (
+    HybridRetriever,
+)
+
 
 class PythonRepositoryRAG:
     """
@@ -115,6 +126,14 @@ class PythonRepositoryRAG:
             dimension=(self.embedding_client.dimension)
         )
 
+        self.code_tokenizer = CodeTokenizer()
+
+        self.bm25_index = InMemoryBM25Index(
+            tokenizer=self.code_tokenizer,
+            k1=1.5,
+            b=0.75,
+        )
+
         self.indexer = RAGIndexer(
             loader=self.loader,
             chunker=self.chunker,
@@ -122,9 +141,18 @@ class PythonRepositoryRAG:
             vector_store=self.vector_store,
         )
 
-        self.retriever = VectorRetriever(
-            embedding_client=(self.embedding_client),
+        self.vector_retriever = VectorRetriever(
+            embedding_client=self.embedding_client,
             vector_store=self.vector_store,
+        )
+
+        self.bm25_retriever = BM25Retriever(index=self.bm25_index)
+
+        self.retriever = HybridRetriever(
+            dense_retriever=(self.vector_retriever),
+            lexical_retriever=(self.bm25_retriever),
+            rrf_k=60,
+            candidate_multiplier=3,
         )
 
         self.context_builder = ContextBuilder(
@@ -143,7 +171,7 @@ class PythonRepositoryRAG:
 
     @property
     def is_indexed(self) -> bool:
-        return not self.vector_store.is_empty
+        return not self.vector_store.is_empty and not self.bm25_index.is_empty
 
     def ensure_index(
         self,
@@ -181,7 +209,11 @@ class PythonRepositoryRAG:
         )
 
     def rebuild(self) -> IndexBuildResult:
-        return self.indexer.rebuild_directory(self.repository_path)
+        index_result = self.indexer.rebuild_directory(self.repository_path)
+
+        self.bm25_index.replace(self.vector_store.chunks)
+
+        return index_result
 
     def answer(
         self,
@@ -301,6 +333,8 @@ class PythonRepositoryRAG:
             chunks=loaded_index.chunks,
             vectors=loaded_index.vectors,
         )
+
+        self.bm25_index.replace(loaded_index.chunks)
 
         return IndexBuildResult(
             source=str(self.repository_path),

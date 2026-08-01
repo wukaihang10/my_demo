@@ -171,10 +171,16 @@ Do not call it repeatedly when the same index is already ready.
         Tool(
             name="search_repository_knowledge",
             description="""
-Semantically search the currently indexed Python repository and return
-relevant code evidence with file paths, symbols and line ranges.
-Use this for architecture, behavior and implementation questions.
-Use exact code search for a precise identifier or literal string.
+Search the currently indexed Python repository using hybrid retrieval:
+semantic vector search plus BM25 keyword search.
+
+Return relevant code evidence with file paths, symbols and line ranges.
+
+Use this for architecture, behavior, implementation logic,
+and mixed natural-language plus identifier queries.
+
+Use search_code when you need exhaustive exact matches for one
+literal string, identifier, error code, or configuration key.
 """,
             function=repository_manager.search_repository_knowledge,
             parameters={
@@ -193,8 +199,7 @@ Use exact code search for a precise identifier or literal string.
                         "maximum": 12,
                         "default": 8,
                         "description": (
-                            "Maximum number of initial semantic retrieval "
-                            "candidates."
+                            "Maximum number of final hybrid retrieval results."
                         ),
                     },
                 },

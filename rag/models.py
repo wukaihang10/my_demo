@@ -46,7 +46,18 @@ class Chunk:
 @dataclass
 class SearchResult:
     """
-    一次向量检索返回的结果。
+    一次检索返回的结果。
+
+    score 的含义由 Retriever 决定：
+
+    VectorRetriever:
+        余弦相似度。
+
+    BM25Retriever:
+        BM25 相关性分数。
+
+    HybridRetriever:
+        RRF 融合分数。
     """
 
     chunk: Chunk
@@ -130,7 +141,7 @@ class RAGSearchResponse:
         经过筛选、编号和预算控制后的上下文。
 
     search_results:
-        向量检索最初返回的 Top-k 结果。
+        Retriever 返回的 Top-k 检索结果
     """
 
     query: str

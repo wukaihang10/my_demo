@@ -6,7 +6,7 @@ from rag.models import (
     RAGAnswer,
     RAGSearchResponse,
 )
-from rag.retriever import VectorRetriever
+from rag.interfaces import Retriever
 
 
 class NaiveRAG:
@@ -22,7 +22,7 @@ class NaiveRAG:
 
     def __init__(
         self,
-        retriever: VectorRetriever,
+        retriever: Retriever,
         context_builder: ContextBuilder,
         generator: RAGGenerator,
     ) -> None:

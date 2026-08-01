@@ -171,7 +171,12 @@ class RepositoryKnowledgeManager:
         top_k: int = 8,
     ) -> ToolResult:
         """
-        在当前活动代码仓库中进行语义检索。
+        在当前活动代码仓库中进行混合检索。
+
+        内部结合：
+        - 向量语义检索
+        - BM25 关键词检索
+        - RRF 排名融合
 
         只返回经过预算控制的代码证据，
         不调用额外 LLM。
