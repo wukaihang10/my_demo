@@ -45,10 +45,36 @@ class RelevantTarget:
 
 
 @dataclass(frozen=True)
+class RelevantGroup:
+    """
+    一个必须被召回的证据组。
+
+    alternatives 中的 Target 是 OR 关系：
+    只要命中其中一个，就认为该证据组被召回。
+    """
+
+    name: str
+    alternatives: tuple[RelevantTarget, ...]
+
+    def matches(
+        self,
+        chunk: Chunk,
+    ) -> bool:
+        return any(target.matches(chunk) for target in self.alternatives)
+
+
+@dataclass(frozen=True)
 class RetrievalEvaluationCase:
+    """
+    一个检索评估问题。
+
+    relevant_groups 之间是 AND 关系：
+    一个问题可能需要多个独立证据组。
+    """
+
     id: str
     query: str
-    relevant: tuple[RelevantTarget, ...]
+    relevant_groups: tuple[RelevantGroup, ...]
 
 
 @dataclass(frozen=True)
@@ -58,44 +84,89 @@ class RetrievalCaseResult:
 
     retrieved: tuple[SearchResult, ...]
 
-    relevant_count: int
-    retrieved_relevant_count: int
+    group_first_ranks: tuple[int | None, ...]
 
-    first_relevant_rank: int | None
+    @property
+    def first_relevant_rank(
+        self,
+    ) -> int | None:
+        ranks = [rank for rank in self.group_first_ranks if rank is not None]
+
+        if not ranks:
+            return None
+
+        return min(ranks)
 
     @property
     def top1_correct(self) -> bool:
+        """
+        排名第一的结果是否属于任意正确证据组。
+        """
+
         return self.first_relevant_rank == 1
 
     def hit_at(
         self,
         k: int,
     ) -> bool:
-        return self.first_relevant_rank is not None and self.first_relevant_rank <= k
+        """
+        Top-k 中是否至少出现一个正确证据组。
+
+        这是“有没有找到答案入口”。
+        """
+
+        return any(rank is not None and rank <= k for rank in self.group_first_ranks)
 
     def recall_at(
         self,
         k: int,
-        case: RetrievalEvaluationCase,
     ) -> float:
-        if not case.relevant:
+        """
+        Top-k 找到了多少 required group。
+
+        例如需要两个证据组，
+        Top-5 只找到其中一个：
+
+            Recall@5 = 0.5
+        """
+
+        group_count = len(self.group_first_ranks)
+
+        if group_count == 0:
             return 0.0
 
-        retrieved_targets: set[int] = set()
+        matched_count = sum(
+            1 for rank in self.group_first_ranks if (rank is not None and rank <= k)
+        )
 
-        for result in self.retrieved[:k]:
-            for index, target in enumerate(case.relevant):
-                if target.matches(result.chunk):
-                    retrieved_targets.add(index)
+        return matched_count / group_count
 
-        return len(retrieved_targets) / len(case.relevant)
+    def complete_at(
+        self,
+        k: int,
+    ) -> bool:
+        """
+        回答问题所需的全部证据组
+        是否都进入 Top-k。
+        """
+
+        if not self.group_first_ranks:
+            return False
+
+        return all(rank is not None and rank <= k for rank in self.group_first_ranks)
 
     @property
     def reciprocal_rank(self) -> float:
-        if self.first_relevant_rank is None:
+        """
+        第一个相关结果的 Reciprocal Rank。
+        """
+
+        rank = self.first_relevant_rank
+
+        if rank is None:
             return 0.0
 
-        return 1.0 / self.first_relevant_rank
+        return 1.0 / rank
 
 
 @dataclass(frozen=True)
@@ -104,11 +175,21 @@ class RetrievalEvaluationSummary:
     case_count: int
 
     top1_accuracy: float
+
     hit_rate_at_3: float
     hit_rate_at_5: float
+    hit_rate_at_8: float
 
     recall_at_3: float
     recall_at_5: float
+    recall_at_8: float
+
+    complete_rate_at_3: float
+    complete_rate_at_5: float
+    complete_rate_at_8: float
+
+    candidate_recall_at_30: float
+    candidate_complete_at_30: float
 
     mrr: float
 
@@ -132,10 +213,10 @@ class RetrievalEvaluator:
         retriever: Retriever,
         cases: list[RetrievalEvaluationCase],
     ) -> RetrievalEvaluationSummary:
-        case_results: list[RetrievalCaseResult] = []
+        if not cases:
+            raise ValueError("Evaluation cases cannot " "be empty")
 
-        recalls_at_3: list[float] = []
-        recalls_at_5: list[float] = []
+        case_results: list[RetrievalCaseResult] = []
 
         for case in cases:
             results = retriever.retrieve(
@@ -143,31 +224,14 @@ class RetrievalEvaluator:
                 top_k=self.top_k,
             )
 
-            case_result = self._evaluate_case(
-                case=case,
-                results=results,
-            )
-
-            case_results.append(case_result)
-
-            recalls_at_3.append(
-                case_result.recall_at(
-                    3,
-                    case,
-                )
-            )
-
-            recalls_at_5.append(
-                case_result.recall_at(
-                    5,
-                    case,
+            case_results.append(
+                self._evaluate_case(
+                    case=case,
+                    results=results,
                 )
             )
 
         case_count = len(case_results)
-
-        if case_count == 0:
-            raise ValueError("Evaluation cases cannot " "be empty")
 
         return RetrievalEvaluationSummary(
             retriever_name=retriever_name,
@@ -175,8 +239,27 @@ class RetrievalEvaluator:
             top1_accuracy=self._average(result.top1_correct for result in case_results),
             hit_rate_at_3=self._average(result.hit_at(3) for result in case_results),
             hit_rate_at_5=self._average(result.hit_at(5) for result in case_results),
-            recall_at_3=sum(recalls_at_3) / case_count,
-            recall_at_5=sum(recalls_at_5) / case_count,
+            hit_rate_at_8=self._average(result.hit_at(8) for result in case_results),
+            recall_at_3=sum(result.recall_at(3) for result in case_results)
+            / case_count,
+            recall_at_5=sum(result.recall_at(5) for result in case_results)
+            / case_count,
+            recall_at_8=sum(result.recall_at(8) for result in case_results)
+            / case_count,
+            complete_rate_at_3=self._average(
+                result.complete_at(3) for result in case_results
+            ),
+            complete_rate_at_5=self._average(
+                result.complete_at(5) for result in case_results
+            ),
+            complete_rate_at_8=self._average(
+                result.complete_at(8) for result in case_results
+            ),
+            candidate_recall_at_30=sum(result.recall_at(30) for result in case_results)
+            / case_count,
+            candidate_complete_at_30=(
+                self._average(result.complete_at(30) for result in case_results)
+            ),
             mrr=sum(result.reciprocal_rank for result in case_results) / case_count,
             case_results=tuple(case_results),
         )
@@ -187,29 +270,23 @@ class RetrievalEvaluator:
         case: RetrievalEvaluationCase,
         results: list[SearchResult],
     ) -> RetrievalCaseResult:
-        matched_targets: set[int] = set()
-
-        first_relevant_rank: int | None = None
+        group_first_ranks: list[int | None] = [None for _ in case.relevant_groups]
 
         for result in results:
-            result_is_relevant = False
+            for group_index, group in enumerate(case.relevant_groups):
+                # 已经找到该证据组的最高排名，
+                # 后面的结果不需要继续覆盖。
+                if group_first_ranks[group_index] is not None:
+                    continue
 
-            for target_index, target in enumerate(case.relevant):
-                if target.matches(result.chunk):
-                    matched_targets.add(target_index)
-
-                    result_is_relevant = True
-
-            if result_is_relevant and first_relevant_rank is None:
-                first_relevant_rank = result.rank
+                if group.matches(result.chunk):
+                    group_first_ranks[group_index] = result.rank
 
         return RetrievalCaseResult(
             case_id=case.id,
             query=case.query,
             retrieved=tuple(results),
-            relevant_count=len(case.relevant),
-            retrieved_relevant_count=len(matched_targets),
-            first_relevant_rank=(first_relevant_rank),
+            group_first_ranks=tuple(group_first_ranks),
         )
 
     @staticmethod
@@ -251,7 +328,16 @@ def load_retrieval_cases(
 
         case_id = raw_case.get("id")
         query = raw_case.get("query")
-        raw_relevant = raw_case.get("relevant")
+        raw_groups = raw_case.get("relevant_groups")
+
+        if (
+            not isinstance(
+                raw_groups,
+                list,
+            )
+            or not raw_groups
+        ):
+            raise ValueError(f"Case {case_id} must have " "at least one relevant group")
 
         if not isinstance(case_id, str) or not case_id.strip():
             raise ValueError("Evaluation case id must " "be a non-empty string")
@@ -262,24 +348,13 @@ def load_retrieval_cases(
         if not isinstance(query, str) or not query.strip():
             raise ValueError(f"Case {case_id} has an " "invalid query")
 
-        if (
-            not isinstance(
-                raw_relevant,
-                list,
-            )
-            or not raw_relevant
-        ):
-            raise ValueError(
-                f"Case {case_id} must have " "at least one relevant target"
-            )
+        relevant_groups: list[RelevantGroup] = []
 
-        relevant_targets: list[RelevantTarget] = []
-
-        for raw_target in raw_relevant:
-            relevant_targets.append(
-                _parse_relevant_target(
+        for raw_group in raw_groups:
+            relevant_groups.append(
+                _parse_relevant_group(
                     case_id,
-                    raw_target,
+                    raw_group,
                 )
             )
 
@@ -287,7 +362,7 @@ def load_retrieval_cases(
             RetrievalEvaluationCase(
                 id=case_id,
                 query=query.strip(),
-                relevant=tuple(relevant_targets),
+                relevant_groups=tuple(relevant_groups),
             )
         )
 
@@ -324,4 +399,46 @@ def _parse_relevant_target(
         source=source.strip(),
         symbol=(symbol.strip() if symbol else None),
         symbol_type=(symbol_type.strip() if symbol_type else None),
+    )
+
+
+def _parse_relevant_group(
+    case_id: str,
+    payload: Any,
+) -> RelevantGroup:
+    if not isinstance(
+        payload,
+        dict,
+    ):
+        raise ValueError(f"Case {case_id} contains " "an invalid relevant group")
+
+    name = payload.get("name")
+
+    if not isinstance(name, str) or not name.strip():
+        raise ValueError(f"Case {case_id} relevant " "group requires a name")
+
+    alternatives = payload.get("alternatives")
+
+    if (
+        not isinstance(
+            alternatives,
+            list,
+        )
+        or not alternatives
+    ):
+        raise ValueError(
+            f"Case {case_id} group " f"{name} requires at least " "one alternative"
+        )
+
+    targets = tuple(
+        _parse_relevant_target(
+            case_id,
+            raw_target,
+        )
+        for raw_target in alternatives
+    )
+
+    return RelevantGroup(
+        name=name.strip(),
+        alternatives=targets,
     )

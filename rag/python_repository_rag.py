@@ -55,6 +55,11 @@ from rag.hybrid_retriever import (
     HybridRetriever,
 )
 
+from rag.result_diversifier import (
+    ResultDiversifier,
+    DiversifiedRetriever,
+)
+
 
 class PythonRepositoryRAG:
     """
@@ -148,10 +153,18 @@ class PythonRepositoryRAG:
 
         self.bm25_retriever = BM25Retriever(index=self.bm25_index)
 
-        self.retriever = HybridRetriever(
+        self.hybrid_retriever = HybridRetriever(
             dense_retriever=(self.vector_retriever),
             lexical_retriever=(self.bm25_retriever),
             rrf_k=60,
+            candidate_multiplier=3,
+        )
+
+        self.result_diversifier = ResultDiversifier(max_results_per_symbol=2)
+
+        self.retriever = DiversifiedRetriever(
+            base_retriever=(self.hybrid_retriever),
+            diversifier=(self.result_diversifier),
             candidate_multiplier=3,
         )
 

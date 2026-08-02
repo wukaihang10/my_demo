@@ -1,0 +1,67 @@
+26-08-02
+时期：rag开发后期
+  今天在思考rag架构。想到现在的python rag类会绑定一个路径，我决定着不太好，或许是我对整个流程掌握得还不是很好。
+
+26-08-02
+时期：rag 开发后期，现在在rag评估，依据评估结果来决定应该改善或增加rag的哪项功能
+
+1. 问题：评估结果里看到了有些测试问题返回的chunks里包含大量来自同一python函数、class_body的chunk，这样会导致其他相关的chunk被挤占位置。
+  加入了diversifier来防止rag 搜索得到的chunk里大多数来自同一个python函数或clas_body。  这个diversifier是针对python chunk的symbol做检查的，故而没有把这个diversifier放在naive_rag(service)里（本来放在这个类的search方法里是合适的，因为这个方法里调用retriever得到候选chunks，再通过diversifier得到去重后的chunks，再包装成RAGSearchResponse返回刚好）； AI有提议说放在PythonRepositoryRAG里，但又由于service.search()里面有context build的逻辑，返回的RAGSearchResponse虽然有原始retriever的结果，但后续也不太方便；也可以不调用service.search()，但职责又会和service重复。   最后，决定把diversitifier和base_retriever包装成一个顶层retriever，这样刚好。
+
+2. 评估指标变为：
+    @3
+    → 很严格的顶部质量
+
+    @5
+    → 小 Context 情况
+
+    @8
+    → 当前 Agent 实际工作点
+
+    @30
+    → Candidate Retrieval 能力
+
+  后续rag改善方向：
+  
+    情况 A：正确代码已经在 Top30
+      说明：
+
+      Retriever 能找到
+          ↓
+      但是排序不好
+
+      这时候应该考虑：
+
+      Reranker
+      class_body 降权
+      更好的 candidate selection
+
+    情况 B：Top30 都没有
+
+      例如：
+
+      RepositoryState
+      Top30 = None
+
+      说明：
+
+      Candidate Retrieval 本身失败
+
+      这时候加 Reranker毫无意义。
+
+      因为：
+
+      Reranker
+      只能重新排列已有 Candidate
+
+      不能把根本没召回的代码凭空找出来
+
+      这时应该考虑：
+
+      Embedding
+      Query Rewrite
+      Embedding Content
+      Tokenizer
+      Query Expansion
+      Chunk Strategy
+  
