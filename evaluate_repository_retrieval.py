@@ -153,6 +153,28 @@ def debug_case_matching(
                 )
 
 
+def print_query_expansions(
+    repository_rag,
+    cases,
+) -> None:
+    print()
+    print("=== Query Expansions ===")
+
+    for case in cases:
+        rewrites = repository_rag.query_expander.expand(case.query)
+
+        print()
+        print(f"[{case.id}]")
+
+        print(f"Original: {case.query}")
+
+        for index, rewrite in enumerate(
+            rewrites,
+            start=1,
+        ):
+            print(f"Rewrite {index}: " f"{rewrite}")
+
+
 def main() -> None:
     cases = load_retrieval_cases("evaluation/" "repository_retrieval_cases.json")
 
@@ -167,9 +189,14 @@ def main() -> None:
 
     retrievers = {
         "Vector": (repository_rag.vector_retriever),
+        "MultiQuery+Vector": repository_rag.multi_query_dense_retriever,
         "BM25": (repository_rag.bm25_retriever),
         "Hybrid": (repository_rag.hybrid_retriever),
         "Hybrid+Diversity": (repository_rag.retriever),
+        "MultiQuery+Hybrid": (repository_rag.multi_query_retriever),
+        "MultiQuery+Hybrid+Diversity": (
+            repository_rag.multi_query_diversified_retriever
+        ),
     }
 
     for name, retriever in retrievers.items():
@@ -186,6 +213,11 @@ def main() -> None:
         )
         print_failures(summary)
         # debug_case_matching(cases=cases, summary=summary, case_id="repository-state")
+
+    print_query_expansions(
+        repository_rag,
+        cases,
+    )
 
 
 if __name__ == "__main__":

@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
-  "created_at_utc": "2026-08-02T09:23:33.317133+00:00",
+  "created_at_utc": "2026-08-03T07:58:04.071171+00:00",
   "repository_path": "C:\\Users\\31972\\Desktop\\my_demo",
-  "repository_file_count": 56,
+  "repository_file_count": 58,
   "repository_files": {
     "agent/agent.py": {
       "size": 31116,
@@ -77,8 +77,8 @@
       "sha256": "95880e4533a695015922be1183077f67697b8a7704a6cb4bbf00770377e57a7e"
     },
     "evaluate_repository_retrieval.py": {
-      "size": 5291,
-      "sha256": "b16a0654030dc7a490e4e1550cd5ca3e4cc5fe716cf9d370a12aadf1c1fa251d"
+      "size": 6126,
+      "sha256": "6bf5661bd4ef9149c54ce2bfb38421a91e259be579b749f8e265913bb2cee4c9"
     },
     "evaluation/retrieval.py": {
       "size": 11865,
@@ -156,6 +156,10 @@
       "size": 3634,
       "sha256": "76f39f54795b18fed951a4dcb926ad0b309a293cad96f40affd5ea41c0efe6c0"
     },
+    "rag/multi_query_retriever.py": {
+      "size": 4614,
+      "sha256": "6645e0171d04c2d4d1a2286722ff65959533246694d1b5ab775b181515bf2b45"
+    },
     "rag/prompt_builder.py": {
       "size": 2604,
       "sha256": "41e79f45c63268b521be4d56199465677f70eaae51cc5ae6c335198523c9face"
@@ -169,8 +173,12 @@
       "sha256": "c1b7d18d65f569e87433c4cc743e9f4ddd350303af443117359aa79ca0a3ab93"
     },
     "rag/python_repository_rag.py": {
-      "size": 13197,
-      "sha256": "58a3a7c6c8c85298bd02e4fe941a4d1aec7fd91f7683683350ea0348e7cfce59"
+      "size": 14030,
+      "sha256": "8f387295f850bf7739c1bd63fa4704c7a095a7c7ef60a6a30516c372e956b46b"
+    },
+    "rag/query_expansion.py": {
+      "size": 6408,
+      "sha256": "3f12bbb9024db02b60ae45273b1e1884f7bdf95a0c7b580f6dc02106317f24fe"
     },
     "rag/repository_manager.py": {
       "size": 12572,
@@ -236,8 +244,8 @@
     "max_chunk_characters": 2400,
     "overlap_lines": 8
   },
-  "document_count": 55,
-  "chunk_count": 638,
-  "chunks_sha256": "bc31fd9d01830b90b7dd6ab8918b467477deb2f61ad7db73cb0927dbdde6195e",
-  "vectors_sha256": "a0bee6d23350fb758bd816b40fe559bd89412706fe8915954c9ce79a92b4d78b"
+  "document_count": 57,
+  "chunk_count": 671,
+  "chunks_sha256": "f8b5f04651da82cc988fad9446d4dcf5b2eefbe012a74c9f4db2ca8bf82d1484",
+  "vectors_sha256": "c8db6c233cef46fe3f42e4d5372f8cad51eb336a079c0b01d6c3befad6c88ea2"
 }

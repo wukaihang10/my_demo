@@ -60,6 +60,14 @@ from rag.result_diversifier import (
     DiversifiedRetriever,
 )
 
+from rag.query_expansion import (
+    LLMQueryExpander,
+)
+
+from rag.multi_query_retriever import (
+    MultiQueryRetriever,
+)
+
 
 class PythonRepositoryRAG:
     """
@@ -160,7 +168,27 @@ class PythonRepositoryRAG:
             candidate_multiplier=3,
         )
 
+        self.query_expander = LLMQueryExpander(max_rewrites=2)
+
+        self.multi_query_retriever = MultiQueryRetriever(
+            base_retriever=(self.hybrid_retriever),
+            query_expander=(self.query_expander),
+            rrf_k=60,
+        )
+
+        self.multi_query_dense_retriever = MultiQueryRetriever(
+            base_retriever=self.vector_retriever,
+            query_expander=self.query_expander,
+            rrf_k=60,
+        )
+
         self.result_diversifier = ResultDiversifier(max_results_per_symbol=2)
+
+        self.multi_query_diversified_retriever = DiversifiedRetriever(
+            base_retriever=(self.multi_query_retriever),
+            diversifier=(self.result_diversifier),
+            candidate_multiplier=3,
+        )
 
         self.retriever = DiversifiedRetriever(
             base_retriever=(self.hybrid_retriever),
