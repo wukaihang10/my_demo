@@ -122,13 +122,18 @@ class DiversifiedRetriever:
         base_retriever: Retriever,
         diversifier: ResultDiversifier,
         candidate_multiplier: int = 3,
+        candidate_count: int | None = None,
     ) -> None:
         if candidate_multiplier <= 0:
             raise ValueError("candidate_multiplier " "must be greater than 0")
 
+        if candidate_count is not None and candidate_count <= 0:
+            raise ValueError("candidate_count must be " "greater than 0")
+
         self.base_retriever = base_retriever
         self.diversifier = diversifier
         self.candidate_multiplier = candidate_multiplier
+        self.candidate_count = candidate_count
 
     def retrieve(
         self,
@@ -139,7 +144,14 @@ class DiversifiedRetriever:
         if top_k <= 0:
             raise ValueError("top_k must be greater than 0")
 
-        candidate_k = top_k * self.candidate_multiplier
+        if self.candidate_count is None:
+            candidate_k = top_k * self.candidate_multiplier
+
+        else:
+            candidate_k = max(
+                top_k,
+                self.candidate_count,
+            )
 
         candidates = self.base_retriever.retrieve(
             query=query,

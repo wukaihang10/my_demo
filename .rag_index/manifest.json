@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
-  "created_at_utc": "2026-08-03T07:58:04.071171+00:00",
+  "created_at_utc": "2026-08-03T10:32:21.332085+00:00",
   "repository_path": "C:\\Users\\31972\\Desktop\\my_demo",
-  "repository_file_count": 58,
+  "repository_file_count": 59,
   "repository_files": {
     "agent/agent.py": {
       "size": 31116,
@@ -77,8 +77,8 @@
       "sha256": "95880e4533a695015922be1183077f67697b8a7704a6cb4bbf00770377e57a7e"
     },
     "evaluate_repository_retrieval.py": {
-      "size": 6126,
-      "sha256": "6bf5661bd4ef9149c54ce2bfb38421a91e259be579b749f8e265913bb2cee4c9"
+      "size": 6305,
+      "sha256": "3923213ec9cc2c60909cba10b40a1cde9dd120d285ab901a04b31377d7de1c9a"
     },
     "evaluation/retrieval.py": {
       "size": 11865,
@@ -145,8 +145,8 @@
       "sha256": "cd48a241204af83a19e1a35dd549ac046b56c417930e10161a8882dd344835fb"
     },
     "rag/interfaces.py": {
-      "size": 1335,
-      "sha256": "af6b4a1e06b0e1b5f869932daf67cc6cf61a94179a68d8319a5ed30ce1a3514e"
+      "size": 1491,
+      "sha256": "26b9af83de7330d11b42f001365c91f567eceb2f849a883b998cc4ba72129108"
     },
     "rag/loader.py": {
       "size": 2414,
@@ -173,8 +173,8 @@
       "sha256": "c1b7d18d65f569e87433c4cc743e9f4ddd350303af443117359aa79ca0a3ab93"
     },
     "rag/python_repository_rag.py": {
-      "size": 14030,
-      "sha256": "8f387295f850bf7739c1bd63fa4704c7a095a7c7ef60a6a30516c372e956b46b"
+      "size": 14868,
+      "sha256": "9f71b45d7555bec10123175752dd1c9f2fb192edb595316fc320d135616ee9e7"
     },
     "rag/query_expansion.py": {
       "size": 6408,
@@ -188,9 +188,13 @@
       "size": 3074,
       "sha256": "6ed5e2452a1f937c26f3e65a6d4501b964b24a14472f1a77e6b6a7b594667659"
     },
+    "rag/reranker.py": {
+      "size": 5976,
+      "sha256": "7050a1428cd8fd18d546cef6d778cdd5903e722bb43350cf500b1fbcb50a0698"
+    },
     "rag/result_diversifier.py": {
-      "size": 3887,
-      "sha256": "de834e78dd16737f5a68a695ac503e1cbdfb1ed0180daa9590b3177cfb0a9007"
+      "size": 4296,
+      "sha256": "7131b54e1fbc8a60eca1253e6c546c94712337a3df27031fb12a07580dc7abac"
     },
     "rag/retriever.py": {
       "size": 1380,
@@ -244,8 +248,8 @@
     "max_chunk_characters": 2400,
     "overlap_lines": 8
   },
-  "document_count": 57,
-  "chunk_count": 671,
-  "chunks_sha256": "f8b5f04651da82cc988fad9446d4dcf5b2eefbe012a74c9f4db2ca8bf82d1484",
-  "vectors_sha256": "c8db6c233cef46fe3f42e4d5372f8cad51eb336a079c0b01d6c3befad6c88ea2"
+  "document_count": 58,
+  "chunk_count": 685,
+  "chunks_sha256": "fdec113a7a0f2655d75dbae22fccdcd4c33754110f920151d4f2478ca5903b74",
+  "vectors_sha256": "a4f165fed162c2e21ae6ebf8e0d53979cfc24372467196ff31a34006b6892241"
 }

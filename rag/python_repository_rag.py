@@ -68,6 +68,11 @@ from rag.multi_query_retriever import (
     MultiQueryRetriever,
 )
 
+from rag.reranker import (
+    CrossEncoderReranker,
+    RerankingRetriever,
+)
+
 
 class PythonRepositoryRAG:
     """
@@ -188,6 +193,27 @@ class PythonRepositoryRAG:
             base_retriever=(self.multi_query_retriever),
             diversifier=(self.result_diversifier),
             candidate_multiplier=3,
+        )
+
+        self.cross_encoder_reranker = CrossEncoderReranker(
+            model_name=("BAAI/bge-reranker-base"),
+            batch_size=8,
+            max_length=512,
+            show_progress_bar=False,
+        )
+
+        self.reranking_retriever = RerankingRetriever(
+            base_retriever=(self.multi_query_retriever),
+            reranker=(self.cross_encoder_reranker),
+            candidate_count=30,
+        )
+
+        self.reranked_diversified_retriever = DiversifiedRetriever(
+            base_retriever=(self.reranking_retriever),
+            diversifier=(self.result_diversifier),
+            # Reranker 后的 Diversity
+            # 始终查看完整 Top30 排序结果。
+            candidate_count=30,
         )
 
         self.retriever = DiversifiedRetriever(

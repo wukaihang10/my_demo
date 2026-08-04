@@ -1,0 +1,93 @@
+[
+  {
+    "query": "Agent 的主运行循环在哪里，模型调用和工具执行如何循环进行？",
+    "rewrites": [
+      "Agent main run loop model call tool execution iteration",
+      "agent loop invoke model execute tool repeatedly source code"
+    ]
+  },
+  {
+    "query": "Agent 在哪里处理并执行模型返回的工具调用？",
+    "rewrites": [
+      "where does Agent process and execute tool calls returned by the model",
+      "Agent tool call execution handler receiving model response"
+    ]
+  },
+  {
+    "query": "工具调用完成后，state、trace 和 observation 分别在哪里被更新？",
+    "rewrites": [
+      "tool call state trace observation update locations",
+      "after tool invocation where are state trace observation updated"
+    ]
+  },
+  {
+    "query": "仓库分析任务保存已经读取文件、搜索关键词和 RAG 状态的数据结构在哪里？",
+    "rewrites": [
+      "repository analysis task data structure persisting read files, search keywords, and RAG state",
+      "where is the dataclass or model tracking analyzed files, query terms, and RAG status in the analysis pipeline"
+    ]
+  },
+  {
+    "query": "仓库工具执行成功后，是哪个函数把工具结果写回 RepositoryState？",
+    "rewrites": [
+      "function writes tool result to RepositoryState after repository tool success",
+      "RepositoryState update tool result assignment after successful repo tool execution"
+    ]
+  },
+  {
+    "query": "RepositoryState 是如何转换成下一轮给模型看的 repository context 的？",
+    "rewrites": [
+      "RepositoryState conversion to repository context for model input",
+      "How RepositoryState becomes repository context in next iteration"
+    ]
+  },
+  {
+    "query": "search_repository_knowledge 工具是如何调用仓库 RAG 并整理 evidence 的？",
+    "rewrites": [
+      "search_repository_knowledge invokes repository RAG and compiles evidence implementation",
+      "search_repository_knowledge tool evidence gathering RAG repository search code"
+    ]
+  },
+  {
+    "query": "Python 仓库 RAG 如何决定加载已有索引还是重新建立索引？",
+    "rewrites": [
+      "RAG logic to check if index already exists before loading vs rebuilding index from documents",
+      "how to decide whether to load a persisted index or recreate the index in Python RAG pipeline"
+    ]
+  },
+  {
+    "query": "磁盘上的 chunks.json、vectors.npy 和 manifest.json 在哪里被加载并进行完整性校验？",
+    "rewrites": [
+      "Where are chunks.json, vectors.npy, and manifest.json loaded and their integrity verified?",
+      "Locations that load and validate integrity of chunks.json, vectors.npy, manifest.json"
+    ]
+  },
+  {
+    "query": "查询文本在哪里被编码成向量并交给 VectorStore 搜索？",
+    "rewrites": [
+      "where is query text encoded into a vector and passed to VectorStore for search",
+      "embedding query into vector and invoking VectorStore search in code"
+    ]
+  },
+  {
+    "query": "Python 文件是如何按照函数、方法和类进行 AST 语义切分的？",
+    "rewrites": [
+      "How to split Python source code into functions, methods, and classes using AST traversal?",
+      "AST-based semantic segmentation of Python files into class, method, and function definitions"
+    ]
+  },
+  {
+    "query": "代码 Chunk 的 BM25 倒排索引在哪里构建？",
+    "rewrites": [
+      "where is the BM25 inverted index built for Chunk",
+      "Chunk BM25 inverted index construction location"
+    ]
+  },
+  {
+    "query": "向量检索和 BM25 的结果在哪里通过 RRF 进行融合和排序？",
+    "rewrites": [
+      "RRF fusion implementation for BM25 and vector search results",
+      "where is reciprocal rank fusion combining BM25 and vector search scores"
+    ]
+  }
+]

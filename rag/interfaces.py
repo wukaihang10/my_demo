@@ -64,3 +64,11 @@ class VectorStore(Protocol):
         top_k: int = 5,
         minimum_score: float | None = None,
     ) -> list[SearchResult]: ...
+
+
+class Reranker(Protocol):
+    def rerank(
+        self,
+        query: str,
+        results: list[SearchResult],
+    ) -> list[SearchResult]: ...

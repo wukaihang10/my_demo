@@ -10,6 +10,18 @@ from rag.python_repository_rag import (
     PythonRepositoryRAG,
 )
 
+from evaluation.query_expander import (
+    FrozenQueryExpander,
+)
+
+from rag.multi_query_retriever import (
+    MultiQueryRetriever,
+)
+
+from rag.reranker import RerankingRetriever
+
+from rag.result_diversifier import DiversifiedRetriever
+
 REPOSITORY_PATH = Path(".")
 
 
@@ -185,18 +197,42 @@ def main() -> None:
 
     repository_rag.ensure_index(index_directory=".rag_index")
 
+    frozen_expander = FrozenQueryExpander.from_json(
+        "evaluation/" "repository_query_expansions.json"
+    )
+
+    frozen_multi_query_retriever = MultiQueryRetriever(
+        base_retriever=(repository_rag.hybrid_retriever),
+        query_expander=(frozen_expander),
+        rrf_k=60,
+    )
+
+    frozen_reranking_retriever = RerankingRetriever(
+        base_retriever=(frozen_multi_query_retriever),
+        reranker=(repository_rag.cross_encoder_reranker),
+        candidate_count=30,
+    )
+
+    frozen_reranked_diversified = DiversifiedRetriever(
+        base_retriever=(frozen_reranking_retriever),
+        diversifier=(repository_rag.result_diversifier),
+        candidate_count=30,
+    )
+
     evaluator = RetrievalEvaluator(top_k=30)
 
     retrievers = {
-        "Vector": (repository_rag.vector_retriever),
-        "MultiQuery+Vector": repository_rag.multi_query_dense_retriever,
-        "BM25": (repository_rag.bm25_retriever),
-        "Hybrid": (repository_rag.hybrid_retriever),
-        "Hybrid+Diversity": (repository_rag.retriever),
-        "MultiQuery+Hybrid": (repository_rag.multi_query_retriever),
-        "MultiQuery+Hybrid+Diversity": (
-            repository_rag.multi_query_diversified_retriever
-        ),
+        # "Vector": (repository_rag.vector_retriever),
+        # "MultiQuery+Vector": repository_rag.multi_query_dense_retriever,
+        # "BM25": (repository_rag.bm25_retriever),
+        # "Hybrid": (repository_rag.hybrid_retriever),
+        # "Hybrid+Diversity": (repository_rag.retriever),
+        "MultiQuery+Hybrid": frozen_multi_query_retriever,
+        # "MultiQuery+Hybrid+Diversity": (
+        #     repository_rag.multi_query_diversified_retriever
+        # ),
+        "MultiQuery+Hybrid+Reranker": frozen_reranking_retriever,
+        "MultiQuery+Hybrid+Reranker+Diversity": frozen_reranked_diversified,
     }
 
     for name, retriever in retrievers.items():
