@@ -56,9 +56,7 @@ def get_client():
     try:
         from openai import OpenAI
     except ImportError as error:
-        raise LLMClientError(
-            "LLM dependencies are missing; install openai and python-dotenv"
-        ) from error
+        raise LLMClientError("LLM dependencies are missing; install openai") from error
 
     api_key = os.getenv("DEEPSEEK_API_KEY")
     base_url = os.getenv("DEEPSEEK_BASE_URL")

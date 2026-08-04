@@ -2,27 +2,30 @@ from typing import Any
 
 from tasks.repository_state import RepositoryState
 from agent.task import TaskProfile
+from rag.repository_manager import RepositoryKnowledgeManager
 from tools.base import Tool
-from tools.registry import TOOL_MAP
+from tools.registry import create_repository_tool_map
 
 REPOSITORY_SYSTEM_PROMPT = """
 You are a GitHub repository analysis agent.
 
-Use the available tools to inspect repositories and answer questions
-using evidence from actual repository files.
+Use the available tools to inspect repositories and answer questions using evidence from actual repository files.
 
 Rules:
+
 1. Do not guess repository details.
 2. Clone a repository when needed.
 3. Use summarize_repository to obtain a high-level overview.
 4. Inspect the repository structure before selecting files.
 5. Read the README when it exists.
-6. Read relevant source and configuration files before explaining code.
-7. Use search_code when you do not know where something is implemented.
-8. Avoid reading every file.
-9. If a tool fails, inspect the error and try a reasonable alternative.
-10. Only give the final answer after gathering enough evidence.
-
+6. After cloning a Python repository, use index_repository_knowledge before repository knowledge search.
+7. Use search_repository_knowledge for natural-language questions, architecture, behavior, data flow, implementation logic, and queries that combine concepts with code identifiers. This tool uses vector and BM25 hybrid retrieval.
+8. Use search_code when you need exhaustive exact matches for a precise identifier, literal string, error code, or configuration key.
+9. Use read_file when retrieved snippets are incomplete or when  surrounding code is required to confirm behavior.
+10. Do not treat semantic search results as complete files.
+11. Avoid reading every file.
+12. If a tool fails, inspect the error and try a reasonable alternative.
+13. Only give the final answer after gathering enough evidence.
 
 Requirements:
 
@@ -39,6 +42,8 @@ REPOSITORY_TOOL_NAMES = (
     "list_files",
     "read_file",
     "search_code",
+    "index_repository_knowledge",
+    "search_repository_knowledge",
 )
 
 
@@ -120,6 +125,23 @@ def reduce_repository_tool_result(
         if keyword:
             state.add_search_keyword(str(keyword))
 
+    elif tool_name == "index_repository_knowledge":
+        repository_path = result.get("repository_path")
+
+        if repository_path:
+            state.repo_path = str(repository_path)
+
+        state.rag_indexed = True
+        state.phase = "reading_code"
+
+    elif tool_name == "search_repository_knowledge":
+        query = result.get("query") or arguments.get("query")
+
+        if query:
+            state.add_rag_search_query(str(query))
+
+        state.phase = "reading_code"
+
 
 def _format_summary_value(value: Any) -> str:
     if isinstance(value, dict):
@@ -168,6 +190,13 @@ def build_repository_context(
         lines.append("Keywords already searched:")
         lines.extend(f"- {keyword}" for keyword in state.searched_keywords)
 
+    if state.rag_indexed:
+        lines.append("Repository semantic index: ready")
+
+    if state.rag_search_queries:
+        lines.append("Semantic repository queries " "already performed:")
+        lines.extend(f"- {query}" for query in state.rag_search_queries)
+
     if state.findings:
         lines.append("Findings gathered:")
         lines.extend(f"- {finding}" for finding in state.findings)
@@ -175,9 +204,13 @@ def build_repository_context(
     return "\n".join(lines)
 
 
-def _build_repository_tools() -> tuple[Tool, ...]:
+def _build_repository_tools(
+    repository_manager: RepositoryKnowledgeManager,
+) -> tuple[Tool, ...]:
+    tool_map = create_repository_tool_map(repository_manager)
+
     missing_tools = [
-        tool_name for tool_name in REPOSITORY_TOOL_NAMES if tool_name not in TOOL_MAP
+        tool_name for tool_name in REPOSITORY_TOOL_NAMES if tool_name not in tool_map
     ]
 
     if missing_tools:
@@ -187,16 +220,27 @@ def _build_repository_tools() -> tuple[Tool, ...]:
             "Repository task references unregistered tools: " f"{missing_text}"
         )
 
-    return tuple(TOOL_MAP[tool_name] for tool_name in REPOSITORY_TOOL_NAMES)
+    return tuple(tool_map[tool_name] for tool_name in REPOSITORY_TOOL_NAMES)
 
 
-REPOSITORY_TOOLS = _build_repository_tools()
+def create_repository_task(
+    repository_manager: RepositoryKnowledgeManager | None = None,
+) -> TaskProfile[RepositoryState]:
+    """
+    Create an isolated repository task for one Agent.
 
-REPOSITORY_TASK = TaskProfile[RepositoryState](
-    name="repository_analysis",
-    system_prompt=REPOSITORY_SYSTEM_PROMPT,
-    tools=REPOSITORY_TOOLS,
-    create_state=create_repository_state,
-    reduce_tool_result=reduce_repository_tool_result,
-    build_context=build_repository_context,
-)
+    When no manager is supplied, a fresh manager is created. Its bound methods
+    are retained by the task's Tool objects, so the owning Agent keeps the
+    manager alive for as long as it keeps the task.
+    """
+
+    manager = repository_manager or RepositoryKnowledgeManager()
+
+    return TaskProfile[RepositoryState](
+        name="repository_analysis",
+        system_prompt=REPOSITORY_SYSTEM_PROMPT,
+        tools=_build_repository_tools(manager),
+        create_state=create_repository_state,
+        reduce_tool_result=reduce_repository_tool_result,
+        build_context=build_repository_context,
+    )

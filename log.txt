@@ -1,0 +1,106 @@
+26-08-02
+时期：rag开发后期
+
+今天在思考rag架构。想到现在的python rag类会绑定一个路径，我决定着不太好，或许是我对整个流程掌握得还不是很好。
+
+26-08-02
+时期：rag 开发后期，现在在rag评估，依据评估结果来决定应该改善或增加rag的哪项功能
+
+1. 问题：评估结果里看到了有些测试问题返回的chunks里包含大量来自同一python函数、class_body的chunk，这样会导致其他相关的chunk被挤占位置。
+  加入了diversifier来防止rag 搜索得到的chunk里大多数来自同一个python函数或clas_body。  这个diversifier是针对python chunk的symbol做检查的，故而没有把这个diversifier放在naive_rag(service)里（本来放在这个类的search方法里是合适的，因为这个方法里调用retriever得到候选chunks，再通过diversifier得到去重后的chunks，再包装成RAGSearchResponse返回刚好）； AI有提议说放在PythonRepositoryRAG里，但又由于service.search()里面有context build的逻辑，返回的RAGSearchResponse虽然有原始retriever的结果，但后续也不太方便；也可以不调用service.search()，但职责又会和service重复。   最后，决定把diversitifier和base_retriever包装成一个顶层retriever，这样刚好。
+
+2. 评估指标变为：
+    @3
+    → 很严格的顶部质量
+
+    @5
+    → 小 Context 情况
+
+    @8
+    → 当前 Agent 实际工作点
+
+    @30
+    → Candidate Retrieval 能力
+
+  后续rag改善方向：
+  
+    情况 A：正确代码已经在 Top30
+      说明：
+
+      Retriever 能找到
+          ↓
+      但是排序不好
+
+      这时候应该考虑：
+
+      Reranker
+      class_body 降权
+      更好的 candidate selection
+
+    情况 B：Top30 都没有
+
+      例如：
+
+      RepositoryState
+      Top30 = None
+
+      说明：
+
+      Candidate Retrieval 本身失败
+
+      这时候加 Reranker毫无意义。
+
+      因为：
+
+      Reranker
+      只能重新排列已有 Candidate
+
+      不能把根本没召回的代码凭空找出来
+
+      这时应该考虑：
+
+      Embedding
+      Query Rewrite
+      Embedding Content
+      Tokenizer
+      Query Expansion
+      Chunk Strategy
+  
+
+26-08-03
+时期：绕过开发后期
+
+今天加入了LLM_rewrite，在retrieve前调用llm重写query——保留原始query，llm生成两条英文的query。multiQueryRetriever里对于3个query分别调用base_retriever进行retrieve，再把3组searchResult用rrf融合起来。    
+最后的效果非常不错！！！ 前3、5、8的hit率、recall率已经complete都提升了，前30的recall率和complete率现在都变为了1。
+不过有一个点，multiquery后接上diversifier，前8的hit、recall、complete都下降了，我认为是因为diversifier要求base_retriever多召回chunks，这也导致了在multi、hybrid阶段的融合排名机制让一些不太正确的chunks反而占据了高位。
+也因此打算加入rerank，因为这样能把8名开外30名内的searchResult提到前面去。
+
+实现了reranker。
+
+
+26-08-04
+时期：rag即将冻结
+
+增加了evaluation cases，现在有36个case。同时把case的rewrite结果保存在一个json文件中，在evaluator文件夹下创建了一个读取json文件的expandor，这样每次评估的时候使用的是同一批rewrite。 
+评估发现reranker反而使得retriever的top-1-accuracy、hit、recall、complete都下降了，diversifier的效果也一般，故而决定在实际生产中不使用reranker和diversifier。   值得一提的是，之前实现的context_builder里就有diversifier的功能。
+
+我试着用bge-reranker-v2-m3模型来reranker，效果非常好！
+
+决定保留reranker。  同时由于cpu和gpu模式下reranker的性能不一致，故而添加了retrieval_mode来决定是否使用reranker。 retrieval_mode取值为fast或quality，默认fast。
+
+
+=== MultiQuery+Hybrid+Reranker ===
+Cases: 36
+Top-1 Accuracy: 0.556
+HitRate@3: 0.917
+HitRate@5: 0.972
+HitRate@8: 1.000
+Recall@3: 0.829
+Recall@5: 0.912
+Recall@8: 0.977
+Complete@3: 0.750
+Complete@5: 0.861
+Complete@8: 0.944
+Candidate Recall@30: 1.000
+Candidate Complete@30: 1.000
+MRR: 0.737

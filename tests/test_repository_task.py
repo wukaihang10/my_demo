@@ -1,6 +1,6 @@
 from tasks.repository import (
-    REPOSITORY_TASK,
     build_repository_context,
+    create_repository_task,
     create_repository_state,
     reduce_repository_tool_result,
 )
@@ -8,13 +8,32 @@ from tasks.repository_state import RepositoryState
 
 
 def test_repository_task_exposes_only_registered_repository_tools() -> None:
-    assert [tool.name for tool in REPOSITORY_TASK.tools] == [
+    task = create_repository_task()
+
+    assert [tool.name for tool in task.tools] == [
         "clone_repository",
         "summarize_repository",
         "list_files",
         "read_file",
         "search_code",
+        "index_repository_knowledge",
+        "search_repository_knowledge",
     ]
+
+
+def test_each_repository_task_has_its_own_rag_manager() -> None:
+    first_task = create_repository_task()
+    second_task = create_repository_task()
+
+    first_tools = {tool.name: tool for tool in first_task.tools}
+    second_tools = {tool.name: tool for tool in second_task.tools}
+
+    first_index_method = first_tools["index_repository_knowledge"].function
+    first_search_method = first_tools["search_repository_knowledge"].function
+    second_index_method = second_tools["index_repository_knowledge"].function
+
+    assert first_index_method.__self__ is first_search_method.__self__
+    assert first_index_method.__self__ is not second_index_method.__self__
 
 
 def test_create_repository_state_normalizes_url() -> None:

@@ -1,0 +1,259 @@
+{
+  "schema_version": 1,
+  "created_at_utc": "2026-08-04T14:24:02.419840+00:00",
+  "repository_path": "C:\\Users\\31972\\Desktop\\my_demo",
+  "repository_file_count": 60,
+  "repository_files": {
+    "agent/agent.py": {
+      "size": 31116,
+      "sha256": "97f56fd70e17d6be7e63f0107e7d48c28b8f186e380950c1fe3bf29aa8a75499"
+    },
+    "agent/config.py": {
+      "size": 488,
+      "sha256": "b22aea1fa937e4a0bcfc76497f563d7b0c364ec1919ab038f383898cc085985c"
+    },
+    "agent/context.py": {
+      "size": 4391,
+      "sha256": "9a5643712e0d7c1812862c7e486d1f3ba89f356eea015db145348f1dafb5ed04"
+    },
+    "agent/final_answer.py": {
+      "size": 2089,
+      "sha256": "714e24ba4e1bbc2b550df847dec7c191975b020841261fc6b6ce739e4d96b8db"
+    },
+    "agent/observation.py": {
+      "size": 753,
+      "sha256": "01ced05273fcea61e38f3d7a9892c72c5c24a049d1b9ac0078c1bf567c8a33db"
+    },
+    "agent/outcome.py": {
+      "size": 2189,
+      "sha256": "9b81b673688a17c4916dae2802d2f024b959d2ed357aa4bc9a9cc4f5c9cb3e74"
+    },
+    "agent/plan.py": {
+      "size": 12269,
+      "sha256": "adc2d3d75aa9957d8bde99a296ed5b7f0492b0bcf0196563c26d374e75630957"
+    },
+    "agent/plan_evaluator.py": {
+      "size": 6521,
+      "sha256": "9b705c3e3a361ede18cd20d1dc789c9860c57314d867612a44ccf513c497e2d6"
+    },
+    "agent/plan_update.py": {
+      "size": 12113,
+      "sha256": "f73a42b2c4e77190d0465be1907f7574490c56a89bcd12c60dcdf79fb330bcf3"
+    },
+    "agent/planner.py": {
+      "size": 6820,
+      "sha256": "2fa8765e0aefbea53030210a564b24414218fff9b3539584ef75eb9a8b176446"
+    },
+    "agent/run_context.py": {
+      "size": 858,
+      "sha256": "2405d4505428f1e7c46a88f9ad5dca0ff71c140e361d5f8352ad8f8dd250d841"
+    },
+    "agent/stagnation.py": {
+      "size": 8950,
+      "sha256": "9e48d48e58ccc6f033c646abfa5529b846fae555533849f1550894c38deec285"
+    },
+    "agent/state.py": {
+      "size": 759,
+      "sha256": "b6509759fdc9a1812feab627583c167d1af78ef18b2a6d0f628a23c3c9f655fc"
+    },
+    "agent/task.py": {
+      "size": 826,
+      "sha256": "5016366ee2b154a5f8b20b49c928a3df33b20c892caba3b834d696df9c9d0b06"
+    },
+    "agent/tool_history.py": {
+      "size": 828,
+      "sha256": "e545572128723a4359fd412472c4f620c7a3e934a597a3cd432aa83cb16912dc"
+    },
+    "agent/trace.py": {
+      "size": 1993,
+      "sha256": "cf5ae18e77f8169da7d6e2579bafe89e54a07e0818091e7edbf74485b7020d5b"
+    },
+    "benchmark_repository_retrieval.py": {
+      "size": 7919,
+      "sha256": "0a8324f8a8ed930047b3ec7cff112253ef17b6eef99cd42240c3eafde1ac1d88"
+    },
+    "demo_repository_agent.py": {
+      "size": 1607,
+      "sha256": "fe5d60b87f96f776f26027674c83372bb6bb97762917206712e1195c49f59a17"
+    },
+    "evaluate_repository_final_evidence.py": {
+      "size": 4515,
+      "sha256": "9ed55094bd108fcbd73d25ee27d0ca571a9e9f6c64094035eef96750cea24b3c"
+    },
+    "evaluate_repository_retrieval.py": {
+      "size": 7451,
+      "sha256": "1481fddbedab4b954286f4fdd51171f873307db1b816123a99d3d9da22af5a10"
+    },
+    "evaluation/query_expander.py": {
+      "size": 2306,
+      "sha256": "e89d1905ae8b4846ee6981e0512abc5c8705f05750eb706576d23a58b3edd1c0"
+    },
+    "evaluation/retrieval.py": {
+      "size": 11865,
+      "sha256": "0fb35e3030939c45c56b5d64b58ad19ee767a31cb9d25b9051cb6562d5b6b390"
+    },
+    "llm/client.py": {
+      "size": 2804,
+      "sha256": "20e23077f646711de886107393de145ae7b1f75397278eb9eba139abed6dd5fd"
+    },
+    "llm/messages.py": {
+      "size": 1570,
+      "sha256": "be1ae95a5a319bb561ddad5b20ec9ab24ee27bdddea509ea4ab85a0f00b96c4e"
+    },
+    "main.py": {
+      "size": 828,
+      "sha256": "c7f0203b055d2a1c33e3fc767d7d3c1efdb96046dddce1a5661ff74d371a8fa9"
+    },
+    "rag/__init__.py": {
+      "size": 2070,
+      "sha256": "1b53a26bbbb92baf01dc66941affb9c4ffbacf85b5587a2d05ae9f332282f993"
+    },
+    "rag/bm25.py": {
+      "size": 7174,
+      "sha256": "d9d94db3552969ac052fe374dc8f5ef0867428b141fb500dd52db5392b9f480e"
+    },
+    "rag/chunker.py": {
+      "size": 5864,
+      "sha256": "7b1834e64e65a0c8eb47b1fed9f45d90425714b455fd3c84214f073748a9607d"
+    },
+    "rag/code_prompt_builder.py": {
+      "size": 981,
+      "sha256": "ac3ab314d3ffdf6fbc0d825dd937163a3ef3b0b7b992430ff991368dc08b16d7"
+    },
+    "rag/code_tokenizer.py": {
+      "size": 2682,
+      "sha256": "906ff7762df05733faa564fa2b323be5e12dd6633c96589a978044f879c3f985"
+    },
+    "rag/context_builder.py": {
+      "size": 5975,
+      "sha256": "afc7c88891b5ccdb23ac3bb5f4b588555f49b49040b645004832ae0a0ae7dab4"
+    },
+    "rag/embedding.py": {
+      "size": 4630,
+      "sha256": "d53ee1121f840fefc3a697afa5863fbaa3e6f0e9e1fab918ccd54987a8bdd7b5"
+    },
+    "rag/generator.py": {
+      "size": 1355,
+      "sha256": "ed3fb0d32fcabbef845ce0c48e5230c80dcce0bb2208eb4bf5ab3a15b6eaece8"
+    },
+    "rag/hybrid_retriever.py": {
+      "size": 4930,
+      "sha256": "4b1a20b80473d0075345786212d1b7c7278471c3834df0344a562e48afe62ccd"
+    },
+    "rag/index_storage.py": {
+      "size": 18933,
+      "sha256": "abaf89bc86037acf204fc46a9882588b4541ac7f703c8b0dc58b02b4984ec597"
+    },
+    "rag/indexer.py": {
+      "size": 2566,
+      "sha256": "cd48a241204af83a19e1a35dd549ac046b56c417930e10161a8882dd344835fb"
+    },
+    "rag/interfaces.py": {
+      "size": 1491,
+      "sha256": "26b9af83de7330d11b42f001365c91f567eceb2f849a883b998cc4ba72129108"
+    },
+    "rag/loader.py": {
+      "size": 2414,
+      "sha256": "213449281e727667deea626c59628dcde0debf75747e62e04aae2b0a2c140b1c"
+    },
+    "rag/models.py": {
+      "size": 3634,
+      "sha256": "76f39f54795b18fed951a4dcb926ad0b309a293cad96f40affd5ea41c0efe6c0"
+    },
+    "rag/multi_query_retriever.py": {
+      "size": 4614,
+      "sha256": "6645e0171d04c2d4d1a2286722ff65959533246694d1b5ab775b181515bf2b45"
+    },
+    "rag/prompt_builder.py": {
+      "size": 2604,
+      "sha256": "41e79f45c63268b521be4d56199465677f70eaae51cc5ae6c335198523c9face"
+    },
+    "rag/python_chunker.py": {
+      "size": 19241,
+      "sha256": "843b745314e91c7cfc48a3d38a223933c66511c95ee8d5505401c7ba7c5f2e1f"
+    },
+    "rag/python_loader.py": {
+      "size": 4490,
+      "sha256": "c1b7d18d65f569e87433c4cc743e9f4ddd350303af443117359aa79ca0a3ab93"
+    },
+    "rag/python_repository_rag.py": {
+      "size": 14240,
+      "sha256": "a41fc423c745d14c0d350c17108142fb843264764d3b172628daa9d39bb93988"
+    },
+    "rag/query_expansion.py": {
+      "size": 6408,
+      "sha256": "3f12bbb9024db02b60ae45273b1e1884f7bdf95a0c7b580f6dc02106317f24fe"
+    },
+    "rag/repository_manager.py": {
+      "size": 12769,
+      "sha256": "959a08817f63289e883579573aa43b7ccd93429ee82037250fa12783ee4ab8b9"
+    },
+    "rag/repository_snapshot.py": {
+      "size": 3074,
+      "sha256": "6ed5e2452a1f937c26f3e65a6d4501b964b24a14472f1a77e6b6a7b594667659"
+    },
+    "rag/reranker.py": {
+      "size": 5976,
+      "sha256": "7050a1428cd8fd18d546cef6d778cdd5903e722bb43350cf500b1fbcb50a0698"
+    },
+    "rag/result_diversifier.py": {
+      "size": 4296,
+      "sha256": "7131b54e1fbc8a60eca1253e6c546c94712337a3df27031fb12a07580dc7abac"
+    },
+    "rag/retriever.py": {
+      "size": 1380,
+      "sha256": "271685c8e070137aae055b2b380795c1b1cabad3fe7350a5b7d1680a314bb663"
+    },
+    "rag/service.py": {
+      "size": 2234,
+      "sha256": "f9b3eb8fb6f20b4caa8a727d1e7a2d9a49e0bb1815b5371f2fe13ad799a952ad"
+    },
+    "rag/vector_store.py": {
+      "size": 10612,
+      "sha256": "a069f1a684f5bbc0190760fccca7432f474bb297c182a5d48d8ff7b4f7a17600"
+    },
+    "tasks/__init__.py": {
+      "size": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "tasks/repository.py": {
+      "size": 7874,
+      "sha256": "6b7b885c5439a773434a0db4f7d751e01ae4f266977d47d17a5f4ca8aa84b2d6"
+    },
+    "tasks/repository_state.py": {
+      "size": 1380,
+      "sha256": "a98cd9bbf87b4c302f74b5094e7711f6baae51e04b0a5f68a36bb818527cd7c7"
+    },
+    "tools/base.py": {
+      "size": 557,
+      "sha256": "18298c3bf23453a6d1081af05f4efc1c7b4b3c80541c8059bca931b48ee6400c"
+    },
+    "tools/filesystem.py": {
+      "size": 9743,
+      "sha256": "691c6af44aaecc56d960b93078ce6cb05964f9777f3f96d3a6d823921114940f"
+    },
+    "tools/github.py": {
+      "size": 2562,
+      "sha256": "6ceac3f8e6f4251edb2b5f6c4d32bb12344acea536f8bed6984743cd8de237b6"
+    },
+    "tools/registry.py": {
+      "size": 7144,
+      "sha256": "740ee31d1e2c22f895b3314b5afb9b4e38da44faad608430ac6682db608ded5d"
+    },
+    "workflows/repository_analysis.py": {
+      "size": 1995,
+      "sha256": "b482afe242ce5bc10de56305f5dca13759a90d219ba9fe44002066adaaa13a33"
+    }
+  },
+  "embedding_model": "BAAI/bge-small-zh-v1.5",
+  "vector_dimension": 512,
+  "chunker_type": "PythonASTChunker",
+  "chunker_config": {
+    "max_chunk_characters": 2400,
+    "overlap_lines": 8
+  },
+  "document_count": 59,
+  "chunk_count": 711,
+  "chunks_sha256": "13e18bd61bb1d74423bff60c2a91a7e69b9ef594cdf50dd7270014eb5f42e568",
+  "vectors_sha256": "5f80e948fa0252424d7843464857167e6a7bad9a5be9603cff1d77487f13a930"
+}

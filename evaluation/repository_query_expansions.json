@@ -1,0 +1,254 @@
+[
+  {
+    "query": "Agent 的主运行循环在哪里，模型调用和工具执行如何循环进行？",
+    "rewrites": [
+      "Agent main run loop model call tool execution iteration",
+      "agent loop invoke model execute tool repeatedly source code"
+    ]
+  },
+  {
+    "query": "Agent 在哪里处理并执行模型返回的工具调用？",
+    "rewrites": [
+      "where does Agent process and execute tool calls returned by the model",
+      "Agent tool call execution handler receiving model response"
+    ]
+  },
+  {
+    "query": "工具调用完成后，state、trace 和 observation 分别在哪里被更新？",
+    "rewrites": [
+      "tool call state trace observation update locations",
+      "after tool invocation where are state trace observation updated"
+    ]
+  },
+  {
+    "query": "仓库分析任务保存已经读取文件、搜索关键词和 RAG 状态的数据结构在哪里？",
+    "rewrites": [
+      "repository analysis task data structure persisting read files search keywords and RAG state",
+      "dataclass or model tracking analyzed files query terms and RAG status in repository analysis"
+    ]
+  },
+  {
+    "query": "仓库工具执行成功后，是哪个函数把工具结果写回 RepositoryState？",
+    "rewrites": [
+      "function writes tool result to RepositoryState after repository tool success",
+      "RepositoryState update tool result assignment after successful repo tool execution"
+    ]
+  },
+  {
+    "query": "RepositoryState 是如何转换成下一轮给模型看的 repository context 的？",
+    "rewrites": [
+      "RepositoryState conversion to repository context for model input",
+      "How RepositoryState becomes repository context in next iteration"
+    ]
+  },
+  {
+    "query": "search_repository_knowledge 工具是如何调用仓库 RAG 并整理 evidence 的？",
+    "rewrites": [
+      "search_repository_knowledge invokes repository RAG and compiles evidence implementation",
+      "search_repository_knowledge tool evidence gathering RAG repository search code"
+    ]
+  },
+  {
+    "query": "Python 仓库 RAG 如何决定加载已有索引还是重新建立索引？",
+    "rewrites": [
+      "RAG logic to check if index already exists before loading versus rebuilding from documents",
+      "decide whether to load a persisted index or recreate the index in Python RAG pipeline"
+    ]
+  },
+  {
+    "query": "磁盘上的 chunks.json、vectors.npy 和 manifest.json 在哪里被加载并进行完整性校验？",
+    "rewrites": [
+      "chunks.json vectors.npy manifest.json loading and integrity verification",
+      "load persisted RAG index files and validate hashes counts and vectors"
+    ]
+  },
+  {
+    "query": "查询文本在哪里被编码成向量并交给 VectorStore 搜索？",
+    "rewrites": [
+      "query text encoded into a vector and passed to VectorStore search",
+      "embedding query into vector then vector similarity search"
+    ]
+  },
+  {
+    "query": "Python 文件是如何按照函数、方法和类进行 AST 语义切分的？",
+    "rewrites": [
+      "split Python source code into functions methods and classes using AST traversal",
+      "AST based semantic segmentation of Python files into definitions"
+    ]
+  },
+  {
+    "query": "代码 Chunk 的 BM25 倒排索引在哪里构建？",
+    "rewrites": [
+      "BM25 inverted index construction for code chunks",
+      "build lexical postings document lengths and term frequencies for chunks"
+    ]
+  },
+  {
+    "query": "向量检索和 BM25 的结果在哪里通过 RRF 进行融合和排序？",
+    "rewrites": [
+      "RRF fusion implementation for BM25 and vector retrieval results",
+      "reciprocal rank fusion combining dense and lexical search rankings"
+    ]
+  },
+  {
+    "query": "一次 Agent.run() 执行期间的 messages、state、trace、tool history 和 outcome 被集中保存在哪里？",
+    "rewrites": [
+      "per run mutable context storing messages state trace tool history and outcome",
+      "data container for one Agent run execution state messages trace tools and final outcome"
+    ]
+  },
+  {
+    "query": "每轮调用模型前，Agent 的运行状态、计划和任务特定状态在哪里被组合成 system context？",
+    "rewrites": [
+      "build system context from agent execution state plan and task specific state before model call",
+      "compose runtime state plan task context for each LLM iteration"
+    ]
+  },
+  {
+    "query": "static plan 和 dynamic plan 在给模型看的上下文中是如何采用不同展示逻辑的？",
+    "rewrites": [
+      "render static versus dynamic planning information in model context",
+      "plan context formatting logic for static and dynamic planning modes"
+    ]
+  },
+  {
+    "query": "LLM Planner 返回的 JSON 在哪里被解析，并校验 steps、允许字段和最大步骤数？",
+    "rewrites": [
+      "parse planner JSON response validate steps allowed fields and maximum step count",
+      "planner response validation JSON object step schema and plan limit"
+    ]
+  },
+  {
+    "query": "动态计划更新的 action 在哪里被真正应用到 AgentPlan，并同时受更新次数、总步骤数和单次新增步骤数限制？",
+    "rewrites": [
+      "apply dynamic plan update action with update budget total step limit and append step limit",
+      "runtime plan controller validates budgets and mutates current plan"
+    ]
+  },
+  {
+    "query": "为什么 repository RAG 工具不能放进全局 TOOL_MAP，负责把它们绑定到单个 RepositoryKnowledgeManager 的代码在哪里？",
+    "rewrites": [
+      "bind stateful repository RAG tools to one manager instance instead of global tool registry",
+      "repository tool factory per manager instance stateful RAG registration"
+    ]
+  },
+  {
+    "query": "仓库分析任务在哪里把 system prompt、tools、state factory、reducer 和 context builder 组装成 TaskProfile？",
+    "rewrites": [
+      "compose repository task profile from prompt tools state factory reducer and context builder",
+      "repository analysis TaskProfile construction and dependency wiring"
+    ]
+  },
+  {
+    "query": "RepositoryState 如何避免重复记录已读取文件、搜索关键词和 RAG 查询？",
+    "rewrites": [
+      "RepositoryState deduplicate read files searched keywords and RAG queries before appending",
+      "state methods prevent duplicate file keyword and semantic query history entries"
+    ]
+  },
+  {
+    "query": "构建索引时如果 Python 源文件持续变化，系统在哪里通过前后 snapshot 比较来避免保存不一致索引？",
+    "rewrites": [
+      "compare repository source snapshots before and after index rebuild to avoid inconsistent save",
+      "stable index rebuild retry when Python files change during indexing"
+    ]
+  },
+  {
+    "query": "加载磁盘索引后，当前仓库路径、embedding 模型、向量维度、chunker 配置和源码 snapshot 在哪里做兼容性校验？",
+    "rewrites": [
+      "validate loaded index compatibility with repository path embedding model vector dimension chunker and source snapshot",
+      "runtime compatibility check for persisted RAG index configuration and repository files"
+    ]
+  },
+  {
+    "query": "仓库源码 snapshot 如何用相对路径、文件大小和 SHA-256 构建，而不是依赖 mtime？",
+    "rewrites": [
+      "build repository source snapshot using relative paths file size and SHA256 fingerprints",
+      "fingerprint Python repository files by content hash and size instead of modification time"
+    ]
+  },
+  {
+    "query": "索引持久化时如何先写临时 chunks 和 vectors，再最后替换 manifest 作为写入完成标志？",
+    "rewrites": [
+      "atomic RAG index save temporary chunks vectors then replace manifest last",
+      "persist index data files first and manifest as final commit marker"
+    ]
+  },
+  {
+    "query": "manifest.json 的 schema version、repository_files、vector_dimension 和 chunk_count 等结构在哪里被校验？",
+    "rewrites": [
+      "validate manifest schema version repository files vector dimension chunk count structure",
+      "RAG index manifest structural validation and required field checks"
+    ]
+  },
+  {
+    "query": "InMemoryVectorStore 如何把查询向量归一化后用矩阵乘法完成精确余弦 Top-k 搜索？",
+    "rewrites": [
+      "InMemoryVectorStore normalized query vector matrix multiplication cosine top k search",
+      "exact cosine similarity retrieval using normalized vectors and dot product in memory"
+    ]
+  },
+  {
+    "query": "文档如何经过 chunk、embedding 后整体 replace 到 VectorStore，完整索引构建流程在哪里？",
+    "rewrites": [
+      "document chunk embedding pipeline then replace vector store with rebuilt index",
+      "full dense index rebuild from documents to chunks embeddings and vector storage"
+    ]
+  },
+  {
+    "query": "BM25 在哪里计算 IDF、词频饱和和文档长度归一化并生成排序结果？",
+    "rewrites": [
+      "BM25 scoring IDF term frequency saturation document length normalization ranking",
+      "calculate BM25 relevance score from postings term frequency and normalized document length"
+    ]
+  },
+  {
+    "query": "BM25 为什么能匹配文件路径和 symbol，代码在哪里把 source、symbol、symbol_type、parent_symbol 和源码拼成检索文本？",
+    "rewrites": [
+      "BM25 searchable text includes source symbol symbol type parent symbol and source code",
+      "construct lexical retrieval text from code metadata and chunk content"
+    ]
+  },
+  {
+    "query": "代码 tokenizer 在哪里同时保留完整 identifier，并拆分 snake_case、CamelCase 和中文二元词组？",
+    "rewrites": [
+      "code tokenizer preserve full identifier split snake case camel case and Chinese bigrams",
+      "token expansion for source code identifiers and Chinese query text"
+    ]
+  },
+  {
+    "query": "一个 Python 函数或类超过 max_chunk_characters 时，如何按完整代码行切成带 overlap 的多个 part，并尽量在空行结束？",
+    "rewrites": [
+      "split oversized Python symbol by complete lines with overlap and prefer blank line boundaries",
+      "long AST span chunking max characters line overlap preferred code paragraph boundary"
+    ]
+  },
+  {
+    "query": "Python Chunk 给 embedding 和 reranker 的增强文本在哪里加入文件、符号、类型、定义头和当前代码片段？",
+    "rewrites": [
+      "build enriched Python chunk representation with file symbol type definition header and code",
+      "semantic model input text for embedding and reranking from Python chunk metadata"
+    ]
+  },
+  {
+    "query": "Query Expansion 失败时，MultiQuery 检索如何退化到原始 query，并对 rewrites 去重？",
+    "rewrites": [
+      "multi query retrieval fallback to original query when expansion fails and deduplicate rewrites",
+      "query expansion error recovery preserve original query remove duplicate query variants"
+    ]
+  },
+  {
+    "query": "Cross-Encoder reranker 如何用原始 query 与候选 chunk 配对打分，并由装饰器从固定候选池中返回重排后的 Top-k？",
+    "rewrites": [
+      "cross encoder pair original query with candidate chunks score rerank fixed candidate pool top k",
+      "second stage reranking candidate retrieval with query passage relevance scores"
+    ]
+  },
+  {
+    "query": "最终检索结果如何限制同一个 source+symbol 最多出现若干条，同时重新编号 rank？",
+    "rewrites": [
+      "limit final retrieval results per source symbol group and reassign ranks",
+      "result diversification deduplicate chunks cap same symbol evidence count"
+    ]
+  }
+]
