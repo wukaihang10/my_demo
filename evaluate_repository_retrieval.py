@@ -10,6 +10,16 @@ from rag.python_repository_rag import (
     PythonRepositoryRAG,
 )
 
+from rag.reranker import (
+    CrossEncoderReranker,
+    RerankingRetriever,
+)
+
+from rag.result_diversifier import (
+    ResultDiversifier,
+    DiversifiedRetriever,
+)
+
 from evaluation.query_expander import (
     FrozenQueryExpander,
 )
@@ -166,14 +176,14 @@ def debug_case_matching(
 
 
 def print_query_expansions(
-    repository_rag,
+    query_expander,
     cases,
 ) -> None:
     print()
     print("=== Query Expansions ===")
 
     for case in cases:
-        rewrites = repository_rag.query_expander.expand(case.query)
+        rewrites = query_expander.expand(case.query)
 
         print()
         print(f"[{case.id}]")
@@ -201,6 +211,15 @@ def main() -> None:
         "evaluation/" "repository_query_expansions.json"
     )
 
+    cross_encoder_reranker = CrossEncoderReranker(
+        model_name=("BAAI/bge-reranker-v2-m3"),
+        batch_size=8,
+        max_length=512,
+        show_progress_bar=False,
+    )
+
+    result_diversifier = ResultDiversifier(max_results_per_symbol=2)
+
     frozen_multi_query_retriever = MultiQueryRetriever(
         base_retriever=(repository_rag.hybrid_retriever),
         query_expander=(frozen_expander),
@@ -209,13 +228,13 @@ def main() -> None:
 
     frozen_reranking_retriever = RerankingRetriever(
         base_retriever=(frozen_multi_query_retriever),
-        reranker=(repository_rag.cross_encoder_reranker),
+        reranker=cross_encoder_reranker,
         candidate_count=30,
     )
 
     frozen_reranked_diversified = DiversifiedRetriever(
         base_retriever=(frozen_reranking_retriever),
-        diversifier=(repository_rag.result_diversifier),
+        diversifier=result_diversifier,
         candidate_count=30,
     )
 
@@ -226,13 +245,9 @@ def main() -> None:
         # "MultiQuery+Vector": repository_rag.multi_query_dense_retriever,
         # "BM25": (repository_rag.bm25_retriever),
         # "Hybrid": (repository_rag.hybrid_retriever),
-        # "Hybrid+Diversity": (repository_rag.retriever),
         "MultiQuery+Hybrid": frozen_multi_query_retriever,
-        # "MultiQuery+Hybrid+Diversity": (
-        #     repository_rag.multi_query_diversified_retriever
-        # ),
         "MultiQuery+Hybrid+Reranker": frozen_reranking_retriever,
-        "MultiQuery+Hybrid+Reranker+Diversity": frozen_reranked_diversified,
+        # "MultiQuery+Hybrid+Reranker+Diversity": frozen_reranked_diversified,
     }
 
     for name, retriever in retrievers.items():
@@ -250,10 +265,10 @@ def main() -> None:
         print_failures(summary)
         # debug_case_matching(cases=cases, summary=summary, case_id="repository-state")
 
-    print_query_expansions(
-        repository_rag,
-        cases,
-    )
+    # print_query_expansions(
+    #     frozen_expander,
+    #     cases,
+    # )
 
 
 if __name__ == "__main__":

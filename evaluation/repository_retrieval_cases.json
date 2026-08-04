@@ -18,7 +18,6 @@
       }
     ]
   },
-
   {
     "id": "tool-execution",
     "query": "Agent 在哪里处理并执行模型返回的工具调用？",
@@ -43,7 +42,6 @@
       }
     ]
   },
-
   {
     "id": "tool-finalization",
     "query": "工具调用完成后，state、trace 和 observation 分别在哪里被更新？",
@@ -68,7 +66,6 @@
       }
     ]
   },
-
   {
     "id": "repository-state",
     "query": "仓库分析任务保存已经读取文件、搜索关键词和 RAG 状态的数据结构在哪里？",
@@ -88,7 +85,6 @@
       }
     ]
   },
-
   {
     "id": "repository-reducer",
     "query": "仓库工具执行成功后，是哪个函数把工具结果写回 RepositoryState？",
@@ -104,7 +100,6 @@
       }
     ]
   },
-
   {
     "id": "repository-context",
     "query": "RepositoryState 是如何转换成下一轮给模型看的 repository context 的？",
@@ -120,7 +115,6 @@
       }
     ]
   },
-
   {
     "id": "knowledge-manager-search",
     "query": "search_repository_knowledge 工具是如何调用仓库 RAG 并整理 evidence 的？",
@@ -145,7 +139,6 @@
       }
     ]
   },
-
   {
     "id": "repository-index-lifecycle",
     "query": "Python 仓库 RAG 如何决定加载已有索引还是重新建立索引？",
@@ -161,7 +154,6 @@
       }
     ]
   },
-
   {
     "id": "index-storage-load",
     "query": "磁盘上的 chunks.json、vectors.npy 和 manifest.json 在哪里被加载并进行完整性校验？",
@@ -177,7 +169,6 @@
       }
     ]
   },
-
   {
     "id": "vector-retrieval",
     "query": "查询文本在哪里被编码成向量并交给 VectorStore 搜索？",
@@ -193,7 +184,6 @@
       }
     ]
   },
-
   {
     "id": "python-ast-chunking",
     "query": "Python 文件是如何按照函数、方法和类进行 AST 语义切分的？",
@@ -217,7 +207,6 @@
       }
     ]
   },
-
   {
     "id": "bm25-index",
     "query": "代码 Chunk 的 BM25 倒排索引在哪里构建？",
@@ -233,7 +222,6 @@
       }
     ]
   },
-
   {
     "id": "hybrid-retrieval",
     "query": "向量检索和 BM25 的结果在哪里通过 RRF 进行融合和排序？",
@@ -248,6 +236,427 @@
           {
             "source": "rag/hybrid_retriever.py",
             "symbol": "HybridRetriever._accumulate_results"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "run-context-lifecycle",
+    "query": "一次 Agent.run() 执行期间的 messages、state、trace、tool history 和 outcome 被集中保存在哪里？",
+    "relevant_groups": [
+      {
+        "name": "run-context-state",
+        "alternatives": [
+          {
+            "source": "agent/run_context.py",
+            "symbol": "RunContext.<class_body>"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "agent-state-context",
+    "query": "每轮调用模型前，Agent 的运行状态、计划和任务特定状态在哪里被组合成 system context？",
+    "relevant_groups": [
+      {
+        "name": "agent-state-context-builder",
+        "alternatives": [
+          {
+            "source": "agent/context.py",
+            "symbol": "build_state_context"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "plan-context-modes",
+    "query": "static plan 和 dynamic plan 在给模型看的上下文中是如何采用不同展示逻辑的？",
+    "relevant_groups": [
+      {
+        "name": "plan-context-rendering",
+        "alternatives": [
+          {
+            "source": "agent/context.py",
+            "symbol": "_build_plan_section"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "planner-json-validation",
+    "query": "LLM Planner 返回的 JSON 在哪里被解析，并校验 steps、允许字段和最大步骤数？",
+    "relevant_groups": [
+      {
+        "name": "planner-json-object-parsing",
+        "alternatives": [
+          {
+            "source": "agent/planner.py",
+            "symbol": "LLMPlanner._parse_json_object"
+          }
+        ]
+      },
+      {
+        "name": "planner-step-validation",
+        "alternatives": [
+          {
+            "source": "agent/planner.py",
+            "symbol": "LLMPlanner._parse_step_specs"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "plan-update-application",
+    "query": "动态计划更新的 action 在哪里被真正应用到 AgentPlan，并同时受更新次数、总步骤数和单次新增步骤数限制？",
+    "relevant_groups": [
+      {
+        "name": "plan-update-controller",
+        "alternatives": [
+          {
+            "source": "agent/plan_update.py",
+            "symbol": "PlanController.apply_update"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "repository-tool-binding",
+    "query": "为什么 repository RAG 工具不能放进全局 TOOL_MAP，负责把它们绑定到单个 RepositoryKnowledgeManager 的代码在哪里？",
+    "relevant_groups": [
+      {
+        "name": "repository-tool-factory",
+        "alternatives": [
+          {
+            "source": "tools/registry.py",
+            "symbol": "create_repository_tool_map"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "repository-task-profile",
+    "query": "仓库分析任务在哪里把 system prompt、tools、state factory、reducer 和 context builder 组装成 TaskProfile？",
+    "relevant_groups": [
+      {
+        "name": "repository-task-composition",
+        "alternatives": [
+          {
+            "source": "tasks/repository.py",
+            "symbol": "create_repository_task"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "repository-state-dedup",
+    "query": "RepositoryState 如何避免重复记录已读取文件、搜索关键词和 RAG 查询？",
+    "relevant_groups": [
+      {
+        "name": "read-file-dedup",
+        "alternatives": [
+          {
+            "source": "tasks/repository_state.py",
+            "symbol": "RepositoryState.add_read_file"
+          }
+        ]
+      },
+      {
+        "name": "search-keyword-dedup",
+        "alternatives": [
+          {
+            "source": "tasks/repository_state.py",
+            "symbol": "RepositoryState.add_search_keyword"
+          }
+        ]
+      },
+      {
+        "name": "rag-query-dedup",
+        "alternatives": [
+          {
+            "source": "tasks/repository_state.py",
+            "symbol": "RepositoryState.add_rag_search_query"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "index-rebuild-stability",
+    "query": "构建索引时如果 Python 源文件持续变化，系统在哪里通过前后 snapshot 比较来避免保存不一致索引？",
+    "relevant_groups": [
+      {
+        "name": "stable-rebuild-and-save",
+        "alternatives": [
+          {
+            "source": "rag/python_repository_rag.py",
+            "symbol": "PythonRepositoryRAG._rebuild_and_save"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "index-domain-compatibility",
+    "query": "加载磁盘索引后，当前仓库路径、embedding 模型、向量维度、chunker 配置和源码 snapshot 在哪里做兼容性校验？",
+    "relevant_groups": [
+      {
+        "name": "runtime-index-compatibility",
+        "alternatives": [
+          {
+            "source": "rag/python_repository_rag.py",
+            "symbol": "PythonRepositoryRAG._validate_index_compatibility"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "repository-snapshot-fingerprint",
+    "query": "仓库源码 snapshot 如何用相对路径、文件大小和 SHA-256 构建，而不是依赖 mtime？",
+    "relevant_groups": [
+      {
+        "name": "repository-snapshot-build",
+        "alternatives": [
+          {
+            "source": "rag/repository_snapshot.py",
+            "symbol": "RepositorySnapshotBuilder.build"
+          }
+        ]
+      },
+      {
+        "name": "repository-file-fingerprint",
+        "alternatives": [
+          {
+            "source": "rag/repository_snapshot.py",
+            "symbol": "RepositorySnapshotBuilder._fingerprint_file"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "index-atomic-save",
+    "query": "索引持久化时如何先写临时 chunks 和 vectors，再最后替换 manifest 作为写入完成标志？",
+    "relevant_groups": [
+      {
+        "name": "atomic-index-save",
+        "alternatives": [
+          {
+            "source": "rag/index_storage.py",
+            "symbol": "RAGIndexStorage.save"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "manifest-validation",
+    "query": "manifest.json 的 schema version、repository_files、vector_dimension 和 chunk_count 等结构在哪里被校验？",
+    "relevant_groups": [
+      {
+        "name": "manifest-structure-validation",
+        "alternatives": [
+          {
+            "source": "rag/index_storage.py",
+            "symbol": "RAGIndexStorage._validate_manifest_structure"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "vector-store-cosine-search",
+    "query": "InMemoryVectorStore 如何把查询向量归一化后用矩阵乘法完成精确余弦 Top-k 搜索？",
+    "relevant_groups": [
+      {
+        "name": "vector-store-search",
+        "alternatives": [
+          {
+            "source": "rag/vector_store.py",
+            "symbol": "InMemoryVectorStore.search"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "rag-index-build-pipeline",
+    "query": "文档如何经过 chunk、embedding 后整体 replace 到 VectorStore，完整索引构建流程在哪里？",
+    "relevant_groups": [
+      {
+        "name": "dense-index-build-pipeline",
+        "alternatives": [
+          {
+            "source": "rag/indexer.py",
+            "symbol": "RAGIndexer.rebuild_documents"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "bm25-scoring",
+    "query": "BM25 在哪里计算 IDF、词频饱和和文档长度归一化并生成排序结果？",
+    "relevant_groups": [
+      {
+        "name": "bm25-scoring-logic",
+        "alternatives": [
+          {
+            "source": "rag/bm25.py",
+            "symbol": "InMemoryBM25Index.search"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "bm25-searchable-text",
+    "query": "BM25 为什么能匹配文件路径和 symbol，代码在哪里把 source、symbol、symbol_type、parent_symbol 和源码拼成检索文本？",
+    "relevant_groups": [
+      {
+        "name": "bm25-searchable-text",
+        "alternatives": [
+          {
+            "source": "rag/bm25.py",
+            "symbol": "InMemoryBM25Index._build_searchable_text"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "code-tokenizer-identifiers",
+    "query": "代码 tokenizer 在哪里同时保留完整 identifier，并拆分 snake_case、CamelCase 和中文二元词组？",
+    "relevant_groups": [
+      {
+        "name": "identifier-token-expansion",
+        "alternatives": [
+          {
+            "source": "rag/code_tokenizer.py",
+            "symbol": "CodeTokenizer._expand_token"
+          }
+        ]
+      },
+      {
+        "name": "chinese-bigram-expansion",
+        "alternatives": [
+          {
+            "source": "rag/code_tokenizer.py",
+            "symbol": "CodeTokenizer._expand_chinese_token"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "python-long-symbol-splitting",
+    "query": "一个 Python 函数或类超过 max_chunk_characters 时，如何按完整代码行切成带 overlap 的多个 part，并尽量在空行结束？",
+    "relevant_groups": [
+      {
+        "name": "python-span-splitting",
+        "alternatives": [
+          {
+            "source": "rag/python_chunker.py",
+            "symbol": "PythonASTChunker._split_span"
+          },
+          {
+            "source": "rag/python_chunker.py",
+            "symbol": "PythonASTChunker._find_hard_end_line"
+          }
+        ]
+      },
+      {
+        "name": "preferred-code-boundary",
+        "alternatives": [
+          {
+            "source": "rag/python_chunker.py",
+            "symbol": "PythonASTChunker._find_preferred_end_line"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "python-embedding-content",
+    "query": "Python Chunk 给 embedding 和 reranker 的增强文本在哪里加入文件、符号、类型、定义头和当前代码片段？",
+    "relevant_groups": [
+      {
+        "name": "python-enriched-representation",
+        "alternatives": [
+          {
+            "source": "rag/python_chunker.py",
+            "symbol": "PythonASTChunker._build_embedding_content"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "multi-query-fallback",
+    "query": "Query Expansion 失败时，MultiQuery 检索如何退化到原始 query，并对 rewrites 去重？",
+    "relevant_groups": [
+      {
+        "name": "multi-query-fallback",
+        "alternatives": [
+          {
+            "source": "rag/multi_query_retriever.py",
+            "symbol": "MultiQueryRetriever._build_queries"
+          }
+        ]
+      },
+      {
+        "name": "multi-query-deduplication",
+        "alternatives": [
+          {
+            "source": "rag/multi_query_retriever.py",
+            "symbol": "MultiQueryRetriever._deduplicate_queries"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "reranker-flow",
+    "query": "Cross-Encoder reranker 如何用原始 query 与候选 chunk 配对打分，并由装饰器从固定候选池中返回重排后的 Top-k？",
+    "relevant_groups": [
+      {
+        "name": "cross-encoder-reranking",
+        "alternatives": [
+          {
+            "source": "rag/reranker.py",
+            "symbol": "CrossEncoderReranker.rerank"
+          }
+        ]
+      },
+      {
+        "name": "reranking-retriever",
+        "alternatives": [
+          {
+            "source": "rag/reranker.py",
+            "symbol": "RerankingRetriever.retrieve"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "result-diversity",
+    "query": "最终检索结果如何限制同一个 source+symbol 最多出现若干条，同时重新编号 rank？",
+    "relevant_groups": [
+      {
+        "name": "result-diversity-selection",
+        "alternatives": [
+          {
+            "source": "rag/result_diversifier.py",
+            "symbol": "ResultDiversifier.diversify"
           }
         ]
       }

@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
-  "created_at_utc": "2026-08-03T10:32:21.332085+00:00",
+  "created_at_utc": "2026-08-04T13:32:27.788584+00:00",
   "repository_path": "C:\\Users\\31972\\Desktop\\my_demo",
-  "repository_file_count": 59,
+  "repository_file_count": 63,
   "repository_files": {
     "agent/agent.py": {
       "size": 31116,
@@ -68,17 +68,33 @@
       "size": 1993,
       "sha256": "cf5ae18e77f8169da7d6e2579bafe89e54a07e0818091e7edbf74485b7020d5b"
     },
+    "benchmark_repository_retrieval.py": {
+      "size": 7919,
+      "sha256": "0a8324f8a8ed930047b3ec7cff112253ef17b6eef99cd42240c3eafde1ac1d88"
+    },
     "demo_load_documents.py": {
       "size": 2109,
       "sha256": "b7a0a68956ab232afe57461c153365191cbd09f4add30ac8c96d0a5b5ac69504"
+    },
+    "demo_repository_agent.py": {
+      "size": 1398,
+      "sha256": "7390301a96ec686eed1f953f98589555626ef1afb7ce0e8c99f67a0d228354c1"
     },
     "demo_vector_search.py": {
       "size": 2105,
       "sha256": "95880e4533a695015922be1183077f67697b8a7704a6cb4bbf00770377e57a7e"
     },
+    "evaluate_repository_final_evidence.py": {
+      "size": 4515,
+      "sha256": "9ed55094bd108fcbd73d25ee27d0ca571a9e9f6c64094035eef96750cea24b3c"
+    },
     "evaluate_repository_retrieval.py": {
-      "size": 6305,
-      "sha256": "3923213ec9cc2c60909cba10b40a1cde9dd120d285ab901a04b31377d7de1c9a"
+      "size": 7451,
+      "sha256": "1481fddbedab4b954286f4fdd51171f873307db1b816123a99d3d9da22af5a10"
+    },
+    "evaluation/query_expander.py": {
+      "size": 2306,
+      "sha256": "e89d1905ae8b4846ee6981e0512abc5c8705f05750eb706576d23a58b3edd1c0"
     },
     "evaluation/retrieval.py": {
       "size": 11865,
@@ -173,16 +189,16 @@
       "sha256": "c1b7d18d65f569e87433c4cc743e9f4ddd350303af443117359aa79ca0a3ab93"
     },
     "rag/python_repository_rag.py": {
-      "size": 14868,
-      "sha256": "9f71b45d7555bec10123175752dd1c9f2fb192edb595316fc320d135616ee9e7"
+      "size": 14240,
+      "sha256": "a41fc423c745d14c0d350c17108142fb843264764d3b172628daa9d39bb93988"
     },
     "rag/query_expansion.py": {
       "size": 6408,
       "sha256": "3f12bbb9024db02b60ae45273b1e1884f7bdf95a0c7b580f6dc02106317f24fe"
     },
     "rag/repository_manager.py": {
-      "size": 12572,
-      "sha256": "6f549e66e31a15a28e88be32fc06a7d7c56c339e9b358b791f077f6831b0b9f0"
+      "size": 12769,
+      "sha256": "959a08817f63289e883579573aa43b7ccd93429ee82037250fa12783ee4ab8b9"
     },
     "rag/repository_snapshot.py": {
       "size": 3074,
@@ -213,8 +229,8 @@
       "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     },
     "tasks/repository.py": {
-      "size": 7732,
-      "sha256": "5b4a50c90de0600eddaeaeaa86cc4ec9c1b5b7e40f9c8e1b50f62926aad69050"
+      "size": 7874,
+      "sha256": "6b7b885c5439a773434a0db4f7d751e01ae4f266977d47d17a5f4ca8aa84b2d6"
     },
     "tasks/repository_state.py": {
       "size": 1380,
@@ -248,8 +264,8 @@
     "max_chunk_characters": 2400,
     "overlap_lines": 8
   },
-  "document_count": 58,
-  "chunk_count": 685,
-  "chunks_sha256": "fdec113a7a0f2655d75dbae22fccdcd4c33754110f920151d4f2478ca5903b74",
-  "vectors_sha256": "a4f165fed162c2e21ae6ebf8e0d53979cfc24372467196ff31a34006b6892241"
+  "document_count": 62,
+  "chunk_count": 718,
+  "chunks_sha256": "b0573246716218dd25df304e0bb5c9cf006fe0c186ce6775f0a8fc92211f30bf",
+  "vectors_sha256": "4b05331b719c669887adbd79234127b35841da3dbe230bfcaa4273b0a000d6cc"
 }

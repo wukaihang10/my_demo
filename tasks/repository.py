@@ -126,6 +126,11 @@ def reduce_repository_tool_result(
             state.add_search_keyword(str(keyword))
 
     elif tool_name == "index_repository_knowledge":
+        repository_path = result.get("repository_path")
+
+        if repository_path:
+            state.repo_path = str(repository_path)
+
         state.rag_indexed = True
         state.phase = "reading_code"
 

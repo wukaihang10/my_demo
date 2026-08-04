@@ -10,6 +10,7 @@ from rag.embedding import (
 from rag.interfaces import EmbeddingClient
 from rag.python_repository_rag import (
     PythonRepositoryRAG,
+    RetrievalMode,
 )
 
 from rag.repository_snapshot import (
@@ -43,6 +44,7 @@ class RepositoryKnowledgeManager:
         max_evidence_content_characters: int = 2400,
         show_progress_bar: bool = False,
         device: str | None = None,
+        retrieval_mode: RetrievalMode = "fast",
     ) -> None:
         if max_tool_result_characters <= 0:
             raise ValueError("max_tool_result_characters " "must be greater than 0")
@@ -58,9 +60,10 @@ class RepositoryKnowledgeManager:
         self.max_context_characters = max_context_characters
         self.max_context_items = max_context_items
         self.show_progress_bar = show_progress_bar
-        self.device = device
         self.max_tool_result_characters = max_tool_result_characters
         self.max_evidence_content_characters = max_evidence_content_characters
+        self.device = device
+        self.retrieval_mode = retrieval_mode
 
         # 模型在第一次构建索引时才加载。
         self._embedding_client: EmbeddingClient | None = None
@@ -119,6 +122,8 @@ class RepositoryKnowledgeManager:
             overlap_lines=self.overlap_lines,
             max_context_characters=(self.max_context_characters),
             max_context_items=(self.max_context_items),
+            device=self.device,
+            retrieval_mode=self.retrieval_mode,
         )
 
         index_directory = resolved_path / ".rag_index"

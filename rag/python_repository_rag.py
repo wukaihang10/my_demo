@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Literal
 
 from rag.interfaces import EmbeddingClient
 
@@ -55,11 +56,6 @@ from rag.hybrid_retriever import (
     HybridRetriever,
 )
 
-from rag.result_diversifier import (
-    ResultDiversifier,
-    DiversifiedRetriever,
-)
-
 from rag.query_expansion import (
     LLMQueryExpander,
 )
@@ -72,6 +68,11 @@ from rag.reranker import (
     CrossEncoderReranker,
     RerankingRetriever,
 )
+
+RetrievalMode = Literal[
+    "fast",
+    "quality",
+]
 
 
 class PythonRepositoryRAG:
@@ -96,6 +97,7 @@ class PythonRepositoryRAG:
         max_context_items: int = 6,
         show_progress_bar: bool = False,
         device: str | None = None,
+        retrieval_mode: RetrievalMode = "fast",
     ) -> None:
         self.repository_path = Path(repository_path).resolve()
 
@@ -108,6 +110,14 @@ class PythonRepositoryRAG:
             raise NotADirectoryError(
                 "Repository path is not a directory: " f"{self.repository_path}"
             )
+
+        if retrieval_mode not in (
+            "fast",
+            "quality",
+        ):
+            raise ValueError("retrieval_mode must be " "'fast' or 'quality'")
+
+        self.retrieval_mode = retrieval_mode
 
         self.loader = PythonDocumentLoader()
 
@@ -181,46 +191,23 @@ class PythonRepositoryRAG:
             rrf_k=60,
         )
 
-        self.multi_query_dense_retriever = MultiQueryRetriever(
-            base_retriever=self.vector_retriever,
-            query_expander=self.query_expander,
-            rrf_k=60,
-        )
+        if self.retrieval_mode == "fast":
+            self.retriever = self.multi_query_retriever
 
-        self.result_diversifier = ResultDiversifier(max_results_per_symbol=2)
+        else:
+            reranker = CrossEncoderReranker(
+                model_name=("BAAI/bge-reranker-v2-m3"),
+                batch_size=8,
+                max_length=512,
+                device=device,
+                show_progress_bar=False,
+            )
 
-        self.multi_query_diversified_retriever = DiversifiedRetriever(
-            base_retriever=(self.multi_query_retriever),
-            diversifier=(self.result_diversifier),
-            candidate_multiplier=3,
-        )
-
-        self.cross_encoder_reranker = CrossEncoderReranker(
-            model_name=("BAAI/bge-reranker-base"),
-            batch_size=8,
-            max_length=512,
-            show_progress_bar=False,
-        )
-
-        self.reranking_retriever = RerankingRetriever(
-            base_retriever=(self.multi_query_retriever),
-            reranker=(self.cross_encoder_reranker),
-            candidate_count=30,
-        )
-
-        self.reranked_diversified_retriever = DiversifiedRetriever(
-            base_retriever=(self.reranking_retriever),
-            diversifier=(self.result_diversifier),
-            # Reranker 后的 Diversity
-            # 始终查看完整 Top30 排序结果。
-            candidate_count=30,
-        )
-
-        self.retriever = DiversifiedRetriever(
-            base_retriever=(self.hybrid_retriever),
-            diversifier=(self.result_diversifier),
-            candidate_multiplier=3,
-        )
+            self.retriever = RerankingRetriever(
+                base_retriever=(self.multi_query_retriever),
+                reranker=reranker,
+                candidate_count=30,
+            )
 
         self.context_builder = ContextBuilder(
             max_context_characters=(max_context_characters),

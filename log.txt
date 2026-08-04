@@ -74,3 +74,33 @@
 最后的效果非常不错！！！ 前3、5、8的hit率、recall率已经complete都提升了，前30的recall率和complete率现在都变为了1。
 不过有一个点，multiquery后接上diversifier，前8的hit、recall、complete都下降了，我认为是因为diversifier要求base_retriever多召回chunks，这也导致了在multi、hybrid阶段的融合排名机制让一些不太正确的chunks反而占据了高位。
 也因此打算加入rerank，因为这样能把8名开外30名内的searchResult提到前面去。
+
+实现了reranker。
+
+
+26-08-04
+时期：rag即将冻结
+
+增加了evaluation cases，现在有36个case。同时把case的rewrite结果保存在一个json文件中，在evaluator文件夹下创建了一个读取json文件的expandor，这样每次评估的时候使用的是同一批rewrite。 
+评估发现reranker反而使得retriever的top-1-accuracy、hit、recall、complete都下降了，diversifier的效果也一般，故而决定在实际生产中不使用reranker和diversifier。   值得一提的是，之前实现的context_builder里就有diversifier的功能。
+
+我试着用bge-reranker-v2-m3模型来reranker，效果非常好！
+
+决定保留reranker。  同时由于cpu和gpu模式下reranker的性能不一致，故而添加了retrieval_mode来决定是否使用reranker。 retrieval_mode取值为fast或quality，默认fast。
+
+
+=== MultiQuery+Hybrid+Reranker ===
+Cases: 36
+Top-1 Accuracy: 0.556
+HitRate@3: 0.917
+HitRate@5: 0.972
+HitRate@8: 1.000
+Recall@3: 0.829
+Recall@5: 0.912
+Recall@8: 0.977
+Complete@3: 0.750
+Complete@5: 0.861
+Complete@8: 0.944
+Candidate Recall@30: 1.000
+Candidate Complete@30: 1.000
+MRR: 0.737
