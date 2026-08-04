@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
-  "created_at_utc": "2026-08-04T13:32:27.788584+00:00",
+  "created_at_utc": "2026-08-04T14:24:02.419840+00:00",
   "repository_path": "C:\\Users\\31972\\Desktop\\my_demo",
-  "repository_file_count": 63,
+  "repository_file_count": 60,
   "repository_files": {
     "agent/agent.py": {
       "size": 31116,
@@ -72,17 +72,9 @@
       "size": 7919,
       "sha256": "0a8324f8a8ed930047b3ec7cff112253ef17b6eef99cd42240c3eafde1ac1d88"
     },
-    "demo_load_documents.py": {
-      "size": 2109,
-      "sha256": "b7a0a68956ab232afe57461c153365191cbd09f4add30ac8c96d0a5b5ac69504"
-    },
     "demo_repository_agent.py": {
-      "size": 1398,
-      "sha256": "7390301a96ec686eed1f953f98589555626ef1afb7ce0e8c99f67a0d228354c1"
-    },
-    "demo_vector_search.py": {
-      "size": 2105,
-      "sha256": "95880e4533a695015922be1183077f67697b8a7704a6cb4bbf00770377e57a7e"
+      "size": 1607,
+      "sha256": "fe5d60b87f96f776f26027674c83372bb6bb97762917206712e1195c49f59a17"
     },
     "evaluate_repository_final_evidence.py": {
       "size": 4515,
@@ -111,10 +103,6 @@
     "main.py": {
       "size": 828,
       "sha256": "c7f0203b055d2a1c33e3fc767d7d3c1efdb96046dddce1a5661ff74d371a8fa9"
-    },
-    "manual_summarize.py": {
-      "size": 235,
-      "sha256": "8e3861dcd73b768bad9832548f8fc4131b13e942342f1db664ee281888e1538e"
     },
     "rag/__init__.py": {
       "size": 2070,
@@ -264,8 +252,8 @@
     "max_chunk_characters": 2400,
     "overlap_lines": 8
   },
-  "document_count": 62,
-  "chunk_count": 718,
-  "chunks_sha256": "b0573246716218dd25df304e0bb5c9cf006fe0c186ce6775f0a8fc92211f30bf",
-  "vectors_sha256": "4b05331b719c669887adbd79234127b35841da3dbe230bfcaa4273b0a000d6cc"
+  "document_count": 59,
+  "chunk_count": 711,
+  "chunks_sha256": "13e18bd61bb1d74423bff60c2a91a7e69b9ef594cdf50dd7270014eb5f42e568",
+  "vectors_sha256": "5f80e948fa0252424d7843464857167e6a7bad9a5be9603cff1d77487f13a930"
 }

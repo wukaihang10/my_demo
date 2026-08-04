@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 
 from agent.agent import Agent
 from rag.repository_manager import (
@@ -37,7 +38,7 @@ def main() -> None:
 
 请基于实际代码回答。
 不要只根据类名猜测。
-必要时使用 repository knowledge search，
+先使用 repository knowledge search，
 并在检索片段不足时读取相关源码确认。
 """.strip()
 
@@ -52,8 +53,14 @@ def main() -> None:
     print(answer)
 
     print()
-    print("===== OUTCOME =====")
-    print(agent.last_outcome)
+    print("===== State =====")
+    state = agent.state.to_dict()
+    print(json.dumps(state, ensure_ascii=False, indent=2))
+
+    print()
+    print("==== Trace ====")
+    trace = agent.trace.to_dict()
+    print(json.dumps(trace, ensure_ascii=False, indent=2))
 
 
 if __name__ == "__main__":
